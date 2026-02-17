@@ -121,6 +121,18 @@ class Settings:
         return float(self.markets.get("min_liquidity", 0))
 
     @property
+    def category_allowlist(self) -> list[str]:
+        return list(self.markets.get("category_allowlist") or [])
+
+    @property
+    def category_denylist(self) -> list[str]:
+        return list(self.markets.get("category_denylist") or [])
+
+    @property
+    def pinned_markets(self) -> list[str]:
+        return list(self.markets.get("pinned_markets") or [])
+
+    @property
     def gamma_api_base(self) -> str:
         return self.polymarket.get("gamma_api_base", "https://gamma-api.polymarket.com")
 
