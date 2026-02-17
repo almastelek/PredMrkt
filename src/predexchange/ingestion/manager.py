@@ -54,7 +54,16 @@ class IngestionManager:
         append_raw_events_batch(conn, self._batch)
         self._batch = []
 
-    def _on_message(self, payload: dict[str, Any], ingest_ts: int) -> None:
+    def _on_message(self, payload: dict[str, Any] | list[Any], ingest_ts: int) -> None:
+        """Process one or more messages (server may send a list of events)."""
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict):
+                    self._on_message_one(item, ingest_ts)
+        elif isinstance(payload, dict):
+            self._on_message_one(payload, ingest_ts)
+
+    def _on_message_one(self, payload: dict[str, Any], ingest_ts: int) -> None:
         self._msg_count += 1
         row = prepare_polymarket_row(payload, ingest_ts)
         self._batch.append(row)

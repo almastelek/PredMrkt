@@ -62,7 +62,13 @@ async def run_ws_ingestion(
                     ingest_ts = int(time.time() * 1000)
                     msg = _parse_message(raw)
                     if msg is not None:
-                        on_message(msg, ingest_ts)
+                        # Server may send a single object or an array of events
+                        if isinstance(msg, list):
+                            for item in msg:
+                                if isinstance(item, dict):
+                                    on_message(item, ingest_ts)
+                        else:
+                            on_message(msg, ingest_ts)
         except asyncio.CancelledError:
             log.info("ws_cancelled")
             break
