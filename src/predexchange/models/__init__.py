@@ -1,4 +1,8 @@
-"""Canonical schema (Pydantic) - Market, OrderBook, Trade. Filled in Phase 1b."""
+"""Canonical schema (Pydantic) - Market, OrderBook, Trade."""
+
+from predexchange.models.market import Event, Market, Outcome
+from predexchange.models.orderbook import OrderBookDelta, OrderBookSnapshot, PriceLevel
+from predexchange.models.trade import TradePrint
 
 __all__ = [
     "Market",
@@ -6,5 +10,6 @@ __all__ = [
     "Outcome",
     "OrderBookSnapshot",
     "OrderBookDelta",
+    "PriceLevel",
     "TradePrint",
 ]
