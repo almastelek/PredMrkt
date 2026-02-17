@@ -1,0 +1,12 @@
+[package]
+name = "predexchange-core"
+version = "0.1.0"
+edition = "2021"
+description = "Rust core for PredExchange orderbook and replay"
+
+[lib]
+name = "predexchange_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }

@@ -10,6 +10,98 @@ from predexchange.models.orderbook import OrderBookDelta, OrderBookSnapshot, Pri
 
 log = structlog.get_logger(__name__)
 
+try:
+    from predexchange_core import OrderbookEngine as _RustEngine
+    _RUST_AVAILABLE = True
+except ImportError:
+    _RUST_AVAILABLE = False
+    _RustEngine = None
+
+
+def create_orderbook_engine(market_id: str, asset_id: str) -> OrderBookEngine:
+    """Create an engine, using Rust implementation if predexchange_core is built."""
+    if _RUST_AVAILABLE and _RustEngine is not None:
+        return _RustOrderbookEngineAdapter(market_id, asset_id)
+    return OrderBookEngine(market_id, asset_id)
+
+
+class _RustOrderbookEngineAdapter:
+    """Wraps Rust OrderbookEngine with the same API as Python OrderBookEngine."""
+
+    def __init__(self, market_id: str, asset_id: str) -> None:
+        self._rust = _RustEngine(market_id, asset_id)
+        self.market_id = market_id
+        self.asset_id = asset_id
+        self._inconsistent = False
+
+    def apply_snapshot(self, snapshot: OrderBookSnapshot) -> None:
+        if snapshot.market_id != self.market_id or snapshot.asset_id != self.asset_id:
+            return
+        bids = [(lev.price, lev.size) for lev in snapshot.bids if lev.size >= 0]
+        asks = [(lev.price, lev.size) for lev in snapshot.asks if lev.size >= 0]
+        self._rust.apply_snapshot(bids, asks)
+        self._inconsistent = False
+
+    def apply_delta(self, delta: OrderBookDelta) -> None:
+        if delta.market_id != self.market_id or delta.asset_id != self.asset_id:
+            return
+        if delta.size < 0:
+            self._inconsistent = True
+            return
+        self._rust.apply_delta(delta.side, delta.price, delta.size)
+
+    @property
+    def best_bid(self) -> float | None:
+        return self._rust.best_bid
+
+    @property
+    def best_ask(self) -> float | None:
+        return self._rust.best_ask
+
+    @property
+    def mid_price(self) -> float | None:
+        return self._rust.mid_price
+
+    @property
+    def spread(self) -> float | None:
+        bb, ba = self.best_bid, self.best_ask
+        if bb is not None and ba is not None:
+            return ba - bb
+        return None
+
+    @property
+    def has_snapshot(self) -> bool:
+        return self._rust.has_snapshot
+
+    @property
+    def inconsistent(self) -> bool:
+        return self._inconsistent
+
+    @property
+    def bids(self) -> dict[float, float]:
+        return {}  # Rust doesn't expose; aggregator doesn't need
+
+    @property
+    def asks(self) -> dict[float, float]:
+        return {}
+
+    def to_snapshot(self, exchange_ts: int | None = None, ingest_ts: int | None = None) -> OrderBookSnapshot:
+        # Fallback: return minimal snapshot from best bid/ask
+        bb, ba = self.best_bid, self.best_ask
+        bids = [PriceLevel(price=bb, size=1.0)] if bb is not None else []
+        asks = [PriceLevel(price=ba, size=1.0)] if ba is not None else []
+        return OrderBookSnapshot(
+            market_id=self.market_id,
+            asset_id=self.asset_id,
+            bids=bids,
+            asks=asks,
+            exchange_ts=exchange_ts,
+            ingest_ts=ingest_ts,
+        )
+
+    def depth_at_levels(self, n: int = 5) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+        return ([], [])  # Rust doesn't expose depth; TUI will show best only when using Rust
+
 
 class OrderBookEngine:
     """In-memory L2 orderbook per market/asset. Deterministic application of snapshot and deltas."""

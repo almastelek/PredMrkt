@@ -8,7 +8,7 @@ from predexchange.ingestion.polymarket.normalize import (
     parse_book_message,
     parse_price_change_message,
 )
-from predexchange.orderbook.engine import OrderBookEngine
+from predexchange.orderbook.engine import OrderBookEngine, create_orderbook_engine
 
 
 class OrderBookAggregator:
@@ -20,7 +20,7 @@ class OrderBookAggregator:
     def _engine(self, market_id: str, asset_id: str) -> OrderBookEngine:
         key = (market_id, asset_id)
         if key not in self._engines:
-            self._engines[key] = OrderBookEngine(market_id, asset_id)
+            self._engines[key] = create_orderbook_engine(market_id, asset_id)
         return self._engines[key]
 
     def on_message(self, payload: dict[str, Any], ingest_ts: int) -> None:
