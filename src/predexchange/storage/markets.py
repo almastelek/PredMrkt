@@ -92,3 +92,26 @@ def get_tracked_market_ids(conn: DuckDBPyConnection) -> list[str]:
     """Return list of tracked market IDs in order."""
     rows = conn.execute("SELECT market_id FROM tracked_markets ORDER BY added_at").fetchall()
     return [r[0] for r in rows]
+
+
+def get_tracked_asset_ids(conn: DuckDBPyConnection) -> list[str]:
+    """Return all CLOB asset (token) IDs for tracked markets, for WebSocket subscription."""
+    rows = conn.execute(
+        """
+        SELECT m.outcomes FROM markets m
+        JOIN tracked_markets t ON m.market_id = t.market_id
+        """
+    ).fetchall()
+    asset_ids = []
+    for (outcomes_json,) in rows:
+        if not outcomes_json:
+            continue
+        try:
+            outcomes = json.loads(outcomes_json) if isinstance(outcomes_json, str) else outcomes_json
+            for o in outcomes:
+                tid = o.get("token_id") if isinstance(o, dict) else None
+                if tid:
+                    asset_ids.append(str(tid))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return list(dict.fromkeys(asset_ids))
