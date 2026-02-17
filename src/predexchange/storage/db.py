@@ -63,6 +63,19 @@ CREATE TABLE IF NOT EXISTS orderbook_snapshots (
     asks_json       JSON,
     imbalance       DOUBLE
 );
+
+-- Simulation runs (strategy backtest results)
+CREATE TABLE IF NOT EXISTS sim_runs (
+    run_id          VARCHAR PRIMARY KEY,
+    strategy_name   VARCHAR NOT NULL,
+    market_id       VARCHAR NOT NULL,
+    params          JSON,
+    final_inventory DOUBLE,
+    realized_pnl    DOUBLE,
+    fill_count      INTEGER,
+    events_processed INTEGER,
+    created_at      BIGINT
+);
 """
 
 
