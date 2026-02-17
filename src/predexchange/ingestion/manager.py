@@ -29,6 +29,7 @@ class IngestionManager:
         reconnect_base_delay_sec: float = 1.0,
         reconnect_max_delay_sec: float = 60.0,
         reconnect_max_retries: int = 0,
+        orderbook_aggregator: Any = None,
     ):
         self.db_path = Path(db_path)
         self.ws_url = ws_url
@@ -36,6 +37,7 @@ class IngestionManager:
         self.reconnect_base_delay_sec = reconnect_base_delay_sec
         self.reconnect_max_delay_sec = reconnect_max_delay_sec
         self.reconnect_max_retries = reconnect_max_retries
+        self.orderbook_aggregator = orderbook_aggregator
         self._conn = None
         self._batch: list[tuple[str, str, str, str, str | None, int | None, int, str]] = []
         self._msg_count = 0
@@ -65,6 +67,8 @@ class IngestionManager:
 
     def _on_message_one(self, payload: dict[str, Any], ingest_ts: int) -> None:
         self._msg_count += 1
+        if self.orderbook_aggregator is not None:
+            self.orderbook_aggregator.on_message(payload, ingest_ts)
         row = prepare_polymarket_row(payload, ingest_ts)
         self._batch.append(row)
         if len(self._batch) >= self.event_batch_size:
