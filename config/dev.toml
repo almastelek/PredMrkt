@@ -1,0 +1,11 @@
+# Dev overrides (load with profile=dev)
+
+[ingestion]
+discovery_refresh_interval_sec = 120
+
+[markets]
+track_count = 5
+
+[logging]
+level = "DEBUG"
+format = "console"

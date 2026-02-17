@@ -1,0 +1,41 @@
+# PredExchange default configuration
+
+[ingestion]
+# WebSocket reconnect
+reconnect_base_delay_sec = 1.0
+reconnect_max_delay_sec = 60.0
+reconnect_max_retries = 0  # 0 = infinite
+
+# Market discovery refresh
+discovery_refresh_interval_sec = 600  # 10 minutes
+
+[storage]
+# DuckDB database path (relative to cwd or absolute)
+db_path = "data/predex.duckdb"
+
+# Batch size for raw event writes
+event_batch_size = 100
+
+[markets]
+# Number of markets to track
+track_count = 50
+
+# Selection criteria (volume/activity proxies)
+min_volume_24h = 0
+min_liquidity = 0
+
+# Category filter: allowlist (empty = all) or denylist
+# category_allowlist = ["politics", "crypto"]
+# category_denylist = []
+
+# Manual pin list: market IDs to always track (in addition to top N)
+# pinned_markets = []
+
+[polymarket]
+gamma_api_base = "https://gamma-api.polymarket.com"
+clob_ws_url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+
+[logging]
+level = "INFO"
+# format: "json" or "console"
+format = "console"
