@@ -1,2 +1,41 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+
+# Local data and DB (ingestion output)
+data/*.duckdb
+data/*.duckdb-wal
+*.parquet
+
+# Rust (predexchange-core)
+predexchange-core/target/
+
+# Node / Next.js (web dashboard)
+web/node_modules/
+web/.next/
+web/out/
+
+# Testing / linting
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Env files (secrets)
+.env
+.env.local
+*.local
