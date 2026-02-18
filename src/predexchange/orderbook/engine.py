@@ -18,9 +18,9 @@ except ImportError:
     _RustEngine = None
 
 
-def create_orderbook_engine(market_id: str, asset_id: str) -> OrderBookEngine:
-    """Create an engine, using Rust implementation if predexchange_core is built."""
-    if _RUST_AVAILABLE and _RustEngine is not None:
+def create_orderbook_engine(market_id: str, asset_id: str, use_rust: bool = True) -> OrderBookEngine:
+    """Create an engine. use_rust=False forces Python (needed for depth/heatmap chart replay)."""
+    if use_rust and _RUST_AVAILABLE and _RustEngine is not None:
         return _RustOrderbookEngineAdapter(market_id, asset_id)
     return OrderBookEngine(market_id, asset_id)
 

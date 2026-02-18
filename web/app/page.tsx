@@ -83,13 +83,21 @@ export default function Home() {
                         <div style={{ marginBottom: 4 }}>{p.fullName}</div>
                         {p.hasTitle && <div style={{ color: '#888', fontSize: 12 }}>{p.fullId}</div>}
                         <div style={{ marginTop: 4 }}>Events: {p.count}</div>
+                        <a href={`/markets/${encodeURIComponent(p.fullId)}`} style={{ display: 'inline-block', marginTop: 8, color: '#7dd' }}>Open market detail →</a>
                       </div>
                     );
                   })()
                 ) : null
               }
             />
-            <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+            <Bar
+              dataKey="count"
+              radius={[4, 4, 0, 0]}
+              cursor="pointer"
+              onClick={(data: { fullId?: string }) => {
+                if (data?.fullId) window.location.href = `/markets/${encodeURIComponent(data.fullId)}`;
+              }}
+            >
               {barData.map((_, i) => (
                 <Cell key={i} fill={`hsl(${200 + i * 20}, 60%, 45%)`} />
               ))}

@@ -12,7 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from predexchange.config import get_settings
-from predexchange.replay.engine import replay_to_mid_series
+from predexchange.replay.engine import (
+    replay_to_book_snapshots,
+    replay_to_chart_series,
+    replay_to_mid_series,
+)
 from predexchange.storage.db import get_connection
 from predexchange.storage.event_log import log_stats, normalize_condition_id
 from predexchange.storage.markets import list_markets as storage_list_markets
@@ -121,6 +125,77 @@ def market_timeseries(
             step = len(series) // max_points
             series = series[:: max(1, step)][:max_points]
         return {"market_id": market_id, "asset_id": asset_id, "series": [{"t": t, "mid": m} for t, m in series]}
+    finally:
+        conn.close()
+
+
+def _chart_window_ms(start_ts: int | None, end_ts: int | None, default_minutes: int = 30) -> tuple[int | None, int | None]:
+    """If both None, return (now - default_minutes, now) in ms."""
+    if start_ts is not None and end_ts is not None:
+        return start_ts, end_ts
+    import time
+    now_ms = int(time.time() * 1000)
+    if start_ts is None and end_ts is None:
+        return now_ms - default_minutes * 60 * 1000, now_ms
+    if start_ts is None:
+        return end_ts - default_minutes * 60 * 1000, end_ts
+    return start_ts, now_ms
+
+
+@app.get("/markets/{market_id}/chart/series")
+def market_chart_series(
+    market_id: str,
+    asset_id: str = Query(..., description="Asset (token) ID for this market"),
+    start_ts: int | None = Query(None),
+    end_ts: int | None = Query(None),
+    resolution: int = Query(1000, ge=250, le=60000, description="Bucket size in ms (1s default)"),
+    depth_n: int = Query(5, ge=1, le=20, description="Top N levels for depth"),
+) -> dict[str, Any]:
+    """Bucketed series for spread/depth/OFI charts. Window-based; default last 30m if no start/end."""
+    market_id = normalize_condition_id(market_id)
+    start_ts, end_ts = _chart_window_ms(start_ts, end_ts)
+    conn = _get_conn()
+    try:
+        series = replay_to_chart_series(
+            conn,
+            market_id,
+            asset_id,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            bucket_ms=resolution,
+            depth_n=depth_n,
+        )
+        return {"market_id": market_id, "asset_id": asset_id, "series": series}
+    finally:
+        conn.close()
+
+
+@app.get("/markets/{market_id}/chart/book_heatmap")
+def market_chart_book_heatmap(
+    market_id: str,
+    asset_id: str = Query(..., description="Asset (token) ID for this market"),
+    start_ts: int | None = Query(None),
+    end_ts: int | None = Query(None),
+    resolution: int = Query(1000, ge=500, le=10000),
+    tick_size: float = Query(0.01, ge=0.001, le=0.1),
+    ticks_around_mid: int = Query(50, ge=10, le=200),
+) -> dict[str, Any]:
+    """Book snapshots per bucket for depth heatmap (price band around mid). Default last 30m."""
+    market_id = normalize_condition_id(market_id)
+    start_ts, end_ts = _chart_window_ms(start_ts, end_ts)
+    conn = _get_conn()
+    try:
+        snapshots = replay_to_book_snapshots(
+            conn,
+            market_id,
+            asset_id,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            bucket_ms=resolution,
+            tick_size=tick_size,
+            ticks_around_mid=ticks_around_mid,
+        )
+        return {"market_id": market_id, "asset_id": asset_id, "snapshots": snapshots}
     finally:
         conn.close()
 

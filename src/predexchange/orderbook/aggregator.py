@@ -14,13 +14,14 @@ from predexchange.orderbook.engine import OrderBookEngine, create_orderbook_engi
 class OrderBookAggregator:
     """Holds OrderBookEngine per (market_id, asset_id), applies normalized Polymarket messages."""
 
-    def __init__(self) -> None:
+    def __init__(self, use_rust: bool = True) -> None:
         self._engines: dict[tuple[str, str], OrderBookEngine] = {}
+        self._use_rust = use_rust
 
     def _engine(self, market_id: str, asset_id: str) -> OrderBookEngine:
         key = (market_id, asset_id)
         if key not in self._engines:
-            self._engines[key] = create_orderbook_engine(market_id, asset_id)
+            self._engines[key] = create_orderbook_engine(market_id, asset_id, use_rust=self._use_rust)
         return self._engines[key]
 
     def on_message(self, payload: dict[str, Any], ingest_ts: int) -> None:
