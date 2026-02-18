@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -231,9 +232,26 @@ def _asset_id_from_markets(conn, canonical: str, normalized: str, market_id_para
     return None
 
 
+def _market_meta_from_db(conn, canonical: str, normalized: str, market_id_param: str) -> tuple[str | None, str | None]:
+    """Return (title, category) from markets table for this condition_id. Empty string -> None."""
+    row = conn.execute(
+        """SELECT title, category FROM markets
+           WHERE LOWER(REPLACE(TRIM(market_id), '0x', '')) = ?
+              OR TRIM(market_id) = ?
+              OR TRIM(market_id) = ?
+           LIMIT 1""",
+        [canonical, normalized, market_id_param],
+    ).fetchone()
+    if not row:
+        return (None, None)
+    title = (row[0] or "").strip() or None
+    category = (row[1] or "").strip() or None
+    return (title, category)
+
+
 @app.get("/markets/{market_id}/asset")
 def market_asset(market_id: str):
-    """Return first asset_id for a market (from raw_events or markets.outcomes). 404 if unknown."""
+    """Return asset_id and optional title/category for an event (condition). 404 if unknown."""
     market_id = (market_id or "").strip()
     if not market_id:
         return JSONResponse(status_code=404, content={"detail": "no_events", "message": "No ingested events for this market"})
@@ -251,23 +269,30 @@ def market_asset(market_id: str):
                LIMIT 1""",
             [canonical, normalized, market_id],
         ).fetchone()
-        if row and row[0]:
-            return {"market_id": market_id, "asset_id": row[0]}
-        # Fallback: discovered market with outcomes (token_id) but no events with asset_id yet
-        asset_id = _asset_id_from_markets(conn, canonical, normalized, market_id)
-        if asset_id:
-            return {"market_id": market_id, "asset_id": asset_id}
-        return JSONResponse(status_code=404, content={"detail": "no_events", "message": "No ingested events for this market"})
+        asset_id = row[0] if row and row[0] else None
+        if not asset_id:
+            asset_id = _asset_id_from_markets(conn, canonical, normalized, market_id)
+        if not asset_id:
+            return JSONResponse(status_code=404, content={"detail": "no_events", "message": "No ingested events for this market"})
+        title, category = _market_meta_from_db(conn, canonical, normalized, market_id)
+        out: dict[str, Any] = {"market_id": market_id, "asset_id": asset_id}
+        if title is not None:
+            out["title"] = title
+        if category is not None:
+            out["category"] = category
+        return out
     finally:
         conn.close()
 
 
 @app.get("/events/by_market")
-def events_by_market(limit: int = Query(30, ge=1, le=100)) -> list[dict[str, Any]]:
-    """Event counts per market (for bar charts). Joins markets table for title when available."""
+def events_by_market(
+    limit: int = Query(40, ge=1, le=100),
+    sparkline_buckets: int = Query(12, ge=0, le=48),
+) -> list[dict[str, Any]]:
+    """Event counts per event (condition). Joins markets for title/category. Optional sparkline = counts per 5-min bucket."""
     conn = _get_conn()
     try:
-        # Normalize condition_id for join: strip 0x and lowercase so Gamma (sometimes no 0x) matches WS (0x)
         rows = conn.execute(
             """
             WITH counts AS (
@@ -277,17 +302,49 @@ def events_by_market(limit: int = Query(30, ge=1, le=100)) -> list[dict[str, Any
                 ORDER BY cnt DESC
                 LIMIT ?
             )
-            SELECT c.market_id, c.cnt, m.title
+            SELECT c.market_id, c.cnt, m.title, m.category
             FROM counts c
             LEFT JOIN markets m ON
                 LOWER(REPLACE(TRIM(m.market_id), '0x', '')) = LOWER(REPLACE(TRIM(c.market_id), '0x', ''))
             """,
             [limit],
         ).fetchall()
-        return [
-            {"market_id": r[0], "event_count": r[1], "title": (r[2] or "").strip() or None}
+        out = [
+            {
+                "market_id": r[0],
+                "event_count": r[1],
+                "title": (r[2] or "").strip() or None,
+                "category": (r[3] or "").strip() or None,
+            }
             for r in rows
         ]
+        if sparkline_buckets <= 0:
+            return out
+        # Sparkline: last N buckets of 5 min each (ingest_ts in ms)
+        now_ms = int(time.time() * 1000)
+        bucket_ms = 5 * 60 * 1000
+        start_ms = now_ms - sparkline_buckets * bucket_ms
+        market_ids = [r["market_id"] for r in out]
+        if not market_ids:
+            return out
+        placeholders = ",".join("?" for _ in market_ids)
+        bucket_rows = conn.execute(
+            f"""
+            SELECT market_id, FLOOR((ingest_ts - ?) / ?)::INTEGER AS bucket, COUNT(*) AS cnt
+            FROM raw_events
+            WHERE market_id IN ({placeholders}) AND ingest_ts >= ?
+            GROUP BY market_id, bucket
+            """,
+            [start_ms, bucket_ms] + market_ids + [start_ms],
+        ).fetchall()
+        by_market: dict[str, list[int]] = {mid: [0] * sparkline_buckets for mid in market_ids}
+        for mid, bucket_idx, cnt in bucket_rows:
+            idx = int(bucket_idx) if bucket_idx is not None else -1
+            if 0 <= idx < sparkline_buckets:
+                by_market[mid][idx] = cnt
+        for item in out:
+            item["sparkline"] = by_market.get(item["market_id"], [0] * sparkline_buckets)
+        return out
     finally:
         conn.close()
 

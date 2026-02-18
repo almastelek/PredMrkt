@@ -1,10 +1,40 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 const API = process.env.NEXT_PUBLIC_API || 'http://127.0.0.1:8000';
 const POLL_MS = 10000;
+const DEFAULT_LIMIT = 40;
+
+type EventRow = {
+  market_id: string;
+  event_count: number;
+  title?: string | null;
+  category?: string | null;
+  sparkline?: number[];
+};
+
+function Sparkline({ values, width = 96, height = 28 }: { values: number[]; width?: number; height?: number }) {
+  if (!values.length) return null;
+  const max = Math.max(1, ...values);
+  const pad = 2;
+  const w = width - pad * 2;
+  const h = height - pad * 2;
+  const step = values.length > 1 ? w / (values.length - 1) : 0;
+  const points = values
+    .map((v, i) => `${pad + i * step},${pad + h - (v / max) * h}`)
+    .join(' ');
+  return (
+    <svg width={width} height={height} style={{ display: 'block' }}>
+      <polyline
+        fill="none"
+        stroke="rgba(100, 180, 220, 0.8)"
+        strokeWidth="1.5"
+        points={points}
+      />
+    </svg>
+  );
+}
 
 export default function Home() {
   const [health, setHealth] = useState<{ status?: string } | null>(null);
@@ -12,9 +42,9 @@ export default function Home() {
     total_events?: number;
     min_ingest_ts?: number;
     max_ingest_ts?: number;
-    by_market?: { market_id: string; count: number }[];
   } | null>(null);
-  const [eventsByMarket, setEventsByMarket] = useState<{ market_id: string; event_count: number; title?: string | null }[]>([]);
+  const [topEvents, setTopEvents] = useState<EventRow[]>([]);
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
   const fetchData = useCallback(() => {
     fetch(`${API}/health`)
@@ -25,10 +55,10 @@ export default function Home() {
       .then((r) => r.json())
       .then(setStats)
       .catch(() => setStats(null));
-    fetch(`${API}/events/by_market?limit=15`)
+    fetch(`${API}/events/by_market?limit=${DEFAULT_LIMIT}&sparkline_buckets=12`)
       .then((r) => r.json())
-      .then(setEventsByMarket)
-      .catch(() => setEventsByMarket([]));
+      .then(setTopEvents)
+      .catch(() => setTopEvents([]));
   }, []);
 
   useEffect(() => {
@@ -37,76 +67,162 @@ export default function Home() {
     return () => clearInterval(id);
   }, [fetchData]);
 
-  const barData = (eventsByMarket || []).map((m) => {
-    const hasTitle = !!(m.title && m.title.trim());
-    const label = hasTitle ? (m.title || '').trim() : m.market_id;
-    const shortLabel = label.length > 36 ? label.slice(0, 33) + '…' : label;
-    return {
-      name: shortLabel,
-      fullName: label,
-      fullId: m.market_id,
-      hasTitle,
-      count: m.event_count,
-    };
-  });
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    topEvents.forEach((r) => {
+      const c = (r.category && r.category.trim()) || null;
+      if (c) set.add(c);
+    });
+    return Array.from(set).sort();
+  }, [topEvents]);
+
+  const filtered = useMemo(() => {
+    if (categoryFilter === 'all') return topEvents;
+    return topEvents.filter((r) => (r.category && r.category.trim()) === categoryFilter);
+  }, [topEvents, categoryFilter]);
 
   const apiDown = health?.status === 'error';
 
   return (
-    <div>
-      {apiDown && (
-        <div style={{ background: '#3a2020', border: '1px solid #a44', padding: 12, marginBottom: 16, borderRadius: 4 }}>
-          <strong>API not running.</strong> From project root run: <code style={{ background: '#222', padding: '2px 6px' }}>predex api</code> or <code style={{ background: '#222', padding: '2px 6px' }}>predex api --with-ingestion</code> (API + live data in one process)
-          <br />
-          <span style={{ color: '#888', fontSize: 14 }}>Dashboard talks to {API}</span>
-        </div>
-      )}
-      <p>Status: {health?.status ?? 'loading...'} (refreshes every {POLL_MS / 1000}s)</p>
-      <p>Total events in log: {stats?.total_events ?? '-'}</p>
-      {stats?.min_ingest_ts != null && stats?.max_ingest_ts != null && (
-        <p>Time range: {new Date(stats.min_ingest_ts).toISOString()} → {new Date(stats.max_ingest_ts).toISOString()}</p>
-      )}
-      <h2 style={{ marginTop: 24 }}>Event count by market (top 15)</h2>
-      <p style={{ color: '#888', fontSize: 14 }}>Relative activity across markets</p>
-      {barData.length > 0 ? (
-        <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={barData} margin={{ top: 8, right: 8, left: 8, bottom: 60 }}>
-            <XAxis dataKey="name" angle={-45} textAnchor="end" height={60} stroke="#888" />
-            <YAxis stroke="#888" />
-            <Tooltip
-              content={({ payload }) =>
-                payload?.[0] ? (
-                  (() => {
-                    const p = payload[0].payload as { fullName: string; fullId: string; hasTitle: boolean; count: number };
-                    return (
-                      <div style={{ background: '#222', padding: 8, border: '1px solid #444', maxWidth: 360 }}>
-                        <div style={{ marginBottom: 4 }}>{p.fullName}</div>
-                        {p.hasTitle && <div style={{ color: '#888', fontSize: 12 }}>{p.fullId}</div>}
-                        <div style={{ marginTop: 4 }}>Events: {p.count}</div>
-                        <a href={`/markets/${encodeURIComponent(p.fullId)}`} style={{ display: 'inline-block', marginTop: 8, color: '#7dd' }}>Open market detail →</a>
-                      </div>
-                    );
-                  })()
-                ) : null
-              }
-            />
-            <Bar
-              dataKey="count"
-              radius={[4, 4, 0, 0]}
-              cursor="pointer"
-              onClick={(data: { fullId?: string }) => {
-                if (data?.fullId) window.location.href = `/markets/${encodeURIComponent(data.fullId)}`;
-              }}
-            >
-              {barData.map((_, i) => (
-                <Cell key={i} fill={`hsl(${200 + i * 20}, 60%, 45%)`} />
+    <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+      {/* Main content: uses space and can grow */}
+      <div style={{ flex: '1 1 560px', minWidth: 0 }}>
+        {apiDown && (
+          <div style={{ background: '#2a1a1a', border: '1px solid #a44', padding: 12, marginBottom: 16, borderRadius: 6 }}>
+            <strong>API not running.</strong> Run <code style={{ background: '#222', padding: '2px 6px' }}>predex api</code> or <code style={{ background: '#222', padding: '2px 6px' }}>predex api --with-ingestion</code>.
+            <br />
+            <span style={{ color: '#888', fontSize: 13 }}>Dashboard uses {API}</span>
+          </div>
+        )}
+
+        <section style={{ marginBottom: 24 }}>
+          <h2 style={{ marginTop: 0, marginBottom: 8, fontSize: 18, fontWeight: 600 }}>Top {DEFAULT_LIMIT} by live activity</h2>
+          <p style={{ color: '#888', fontSize: 13, marginBottom: 16, lineHeight: 1.45 }}>
+            <strong style={{ color: '#aaa' }}>Terminology:</strong> An <strong>event</strong> is one prediction question. A <strong>market</strong> is a tradable outcome (e.g. Yes/No). Below: events ranked by <strong>live order book &amp; price updates</strong> received. Sparkline = last hour (12×5 min).
+          </p>
+
+          {categories.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+              <button
+                type="button"
+                onClick={() => setCategoryFilter('all')}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 6,
+                  border: '1px solid #333',
+                  background: categoryFilter === 'all' ? '#1a3a4a' : '#1a1a1a',
+                  color: categoryFilter === 'all' ? '#9ee' : '#aaa',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                }}
+              >
+                All
+              </button>
+              {categories.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setCategoryFilter(c)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 6,
+                    border: '1px solid #333',
+                    background: categoryFilter === c ? '#1a3a4a' : '#1a1a1a',
+                    color: categoryFilter === c ? '#9ee' : '#aaa',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                  }}
+                >
+                  {c}
+                </button>
               ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      ) : (
-        <p style={{ color: '#666' }}>No event data yet. Run ingestion: predex track start</p>
-      )}
+            </div>
+          )}
+
+          {filtered.length > 0 ? (
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {filtered.map((row, i) => {
+                const label = (row.title && row.title.trim()) || row.market_id;
+                const shortLabel = label.length > 72 ? label.slice(0, 69) + '…' : label;
+                const href = `/markets/${encodeURIComponent(row.market_id)}`;
+                return (
+                  <li
+                    key={row.market_id}
+                    style={{
+                      marginBottom: 8,
+                      padding: '12px 14px',
+                      background: '#161616',
+                      border: '1px solid #2a2a2a',
+                      borderRadius: 6,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                      <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+                        <span style={{ color: '#666', fontSize: 12, marginRight: 8 }}>#{i + 1}</span>
+                        {row.category && (
+                          <span
+                            style={{
+                              marginRight: 8,
+                              padding: '2px 6px',
+                              background: '#252525',
+                              borderRadius: 4,
+                              fontSize: 11,
+                              color: '#888',
+                            }}
+                          >
+                            {row.category}
+                          </span>
+                        )}
+                        <span style={{ color: '#e0e0e0' }} title={label}>{shortLabel}</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
+                        {row.sparkline && row.sparkline.length > 0 && (
+                          <Sparkline values={row.sparkline} width={100} height={28} />
+                        )}
+                        <span style={{ color: '#888', fontSize: 12, minWidth: 64 }}>{row.event_count.toLocaleString()} updates</span>
+                        <a
+                          href={href}
+                          style={{
+                            padding: '6px 12px',
+                            background: '#1a3a4a',
+                            color: '#7dd',
+                            borderRadius: 4,
+                            fontSize: 13,
+                            textDecoration: 'none',
+                          }}
+                        >
+                          View charts →
+                        </a>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p style={{ color: '#666' }}>
+              {topEvents.length === 0
+                ? 'No data yet. Run ingestion (e.g. predex api --with-ingestion or predex track start).'
+                : `No events in category "${categoryFilter}".`}
+            </p>
+          )}
+        </section>
+      </div>
+
+      {/* Right column: stats / meta */}
+      <div style={{ flex: '0 0 220px', position: 'sticky', top: 24 }}>
+        <div style={{ background: '#161616', border: '1px solid #2a2a2a', borderRadius: 8, padding: 16 }}>
+          <h3 style={{ marginTop: 0, marginBottom: 12, fontSize: 14, color: '#aaa' }}>Log stats</h3>
+          <p style={{ margin: '6px 0', fontSize: 13, color: '#ccc' }}>Status: {health?.status ?? '…'}</p>
+          <p style={{ margin: '6px 0', fontSize: 13, color: '#ccc' }}>Total messages: {stats?.total_events?.toLocaleString() ?? '–'}</p>
+          {stats?.min_ingest_ts != null && stats?.max_ingest_ts != null && (
+            <p style={{ margin: '6px 0', fontSize: 12, color: '#888' }}>
+              Range: {new Date(stats.min_ingest_ts).toLocaleTimeString()} – {new Date(stats.max_ingest_ts).toLocaleTimeString()}
+            </p>
+          )}
+          <p style={{ marginTop: 12, fontSize: 11, color: '#666' }}>Refreshes every {POLL_MS / 1000}s</p>
+        </div>
+      </div>
     </div>
   );
 }

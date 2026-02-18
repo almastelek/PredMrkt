@@ -106,7 +106,7 @@ class _RustOrderbookEngineAdapter:
 class OrderBookEngine:
     """In-memory L2 orderbook per market/asset. Deterministic application of snapshot and deltas."""
 
-    __slots__ = ("market_id", "asset_id", "bids", "asks", "_has_snapshot", "_inconsistent")
+    __slots__ = ("market_id", "asset_id", "bids", "asks", "_has_snapshot", "_inconsistent", "_warned_delta_before_snapshot")
 
     def __init__(self, market_id: str, asset_id: str) -> None:
         self.market_id = market_id
@@ -116,6 +116,7 @@ class OrderBookEngine:
         self.asks: dict[float, float] = {}
         self._has_snapshot = False
         self._inconsistent = False
+        self._warned_delta_before_snapshot = False
 
     def apply_snapshot(self, snapshot: OrderBookSnapshot) -> None:
         """Replace book with snapshot. Validates non-negative sizes."""
@@ -146,7 +147,14 @@ class OrderBookEngine:
         if delta.market_id != self.market_id or delta.asset_id != self.asset_id:
             return
         if not self._has_snapshot:
-            log.warning("orderbook_delta_before_snapshot", market_id=self.market_id, asset_id=self.asset_id)
+            if not self._warned_delta_before_snapshot:
+                self._warned_delta_before_snapshot = True
+                log.warning(
+                    "orderbook_delta_before_snapshot",
+                    market_id=self.market_id,
+                    asset_id=self.asset_id,
+                    msg="Deltas before first book snapshot (normal at startup); later deltas suppressed.",
+                )
             self._inconsistent = True
             return
         side = self.bids if delta.side == "BUY" else self.asks

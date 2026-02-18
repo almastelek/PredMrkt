@@ -37,6 +37,8 @@ export default function MarketDetailPage() {
   const params = useParams();
   const marketId = params?.market_id as string;
   const [assetId, setAssetId] = useState<string | null>(null);
+  const [title, setTitle] = useState<string | null>(null);
+  const [category, setCategory] = useState<string | null>(null);
   const [chartSeries, setChartSeries] = useState<ChartPoint[]>([]);
   const [bookSnapshots, setBookSnapshots] = useState<BookSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,10 +62,10 @@ export default function MarketDetailPage() {
         }
         return r.json();
       })
-      .then((asset: { asset_id?: string; _noEvents?: boolean } | null) => {
+      .then((asset: { asset_id?: string; title?: string; category?: string; _noEvents?: boolean } | null) => {
         if (asset && '_noEvents' in asset && asset._noEvents) {
           setError(
-            'No ingested events for this market. Run ingestion (predex api --with-ingestion) and wait for data, or try a market from the Home "Event count by market" list.'
+            'No ingested events for this market. Run ingestion (predex api --with-ingestion) and wait for data, or try a market from the Home list.'
           );
           setLoading(false);
           return undefined;
@@ -74,6 +76,8 @@ export default function MarketDetailPage() {
           return undefined;
         }
         setAssetId(asset.asset_id);
+        setTitle(asset.title ?? null);
+        setCategory(asset.category ?? null);
         const end = Date.now();
         const start = end - windowMin * 60 * 1000;
         const q = `asset_id=${encodeURIComponent(asset.asset_id)}&start_ts=${start}&end_ts=${end}`;
@@ -115,10 +119,17 @@ export default function MarketDetailPage() {
   if (loading) return <p>Loading…</p>;
   if (!assetId) return null;
 
+  const headingLabel = title && title.trim() ? title : (marketId.length > 32 ? `${marketId.slice(0, 29)}…` : marketId);
+
   return (
     <div style={{ maxWidth: 1000 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-        <h2 style={{ margin: 0 }}>Market: {marketId.slice(0, 28)}…</h2>
+        <h2 style={{ margin: 0 }} title={title && title.trim() ? title : marketId}>
+          Event: {headingLabel}
+          {category && (
+            <span style={{ marginLeft: 10, fontSize: 14, fontWeight: 400, color: '#888' }}>({category})</span>
+          )}
+        </h2>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#888', fontSize: 14 }}>
           Window:
           <select
