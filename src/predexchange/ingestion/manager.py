@@ -12,7 +12,7 @@ import structlog
 
 from predexchange.ingestion.polymarket.ws import run_ws_ingestion
 from predexchange.storage.db import get_connection, init_schema
-from predexchange.storage.event_log import append_raw_events_batch, prepare_polymarket_row
+from predexchange.storage.event_log import append_raw_events_batch, prepare_polymarket_rows
 from predexchange.storage.markets import get_tracked_asset_ids
 
 log = structlog.get_logger(__name__)
@@ -69,8 +69,8 @@ class IngestionManager:
         self._msg_count += 1
         if self.orderbook_aggregator is not None:
             self.orderbook_aggregator.on_message(payload, ingest_ts)
-        row = prepare_polymarket_row(payload, ingest_ts)
-        self._batch.append(row)
+        for row in prepare_polymarket_rows(payload, ingest_ts):
+            self._batch.append(row)
         if len(self._batch) >= self.event_batch_size:
             self._flush_batch()
 

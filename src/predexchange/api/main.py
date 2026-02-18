@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -208,20 +209,55 @@ def _canonical_market_id(s: str) -> str:
     return s.lower()
 
 
+def _asset_id_from_markets(conn, canonical: str, normalized: str, market_id_param: str) -> str | None:
+    """Fallback: get first outcome token_id from markets table for this condition_id."""
+    row = conn.execute(
+        """SELECT outcomes FROM markets
+           WHERE LOWER(REPLACE(TRIM(market_id), '0x', '')) = ?
+              OR TRIM(market_id) = ?
+              OR TRIM(market_id) = ?
+           LIMIT 1""",
+        [canonical, normalized, market_id_param],
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        outcomes = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        for o in (outcomes or []):
+            if isinstance(o, dict) and o.get("token_id"):
+                return str(o["token_id"])
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 @app.get("/markets/{market_id}/asset")
 def market_asset(market_id: str):
-    """Return first asset_id for a market (from raw_events). Used to drive timeseries. 404 if no events."""
+    """Return first asset_id for a market (from raw_events or markets.outcomes). 404 if unknown."""
+    market_id = (market_id or "").strip()
+    if not market_id:
+        return JSONResponse(status_code=404, content={"detail": "no_events", "message": "No ingested events for this market"})
     canonical = _canonical_market_id(market_id)
+    normalized = normalize_condition_id(market_id)  # 0x + lower if hex
     conn = _get_conn()
     try:
+        # Prefer asset_id from raw_events (proves we have ingested data for this market)
         row = conn.execute(
             """SELECT DISTINCT asset_id FROM raw_events
-               WHERE LOWER(REPLACE(TRIM(market_id), '0x', '')) = ? LIMIT 1""",
-            [canonical],
+               WHERE asset_id IS NOT NULL AND TRIM(asset_id) != ''
+                 AND (LOWER(REPLACE(TRIM(market_id), '0x', '')) = ?
+                      OR TRIM(market_id) = ?
+                      OR TRIM(market_id) = ?)
+               LIMIT 1""",
+            [canonical, normalized, market_id],
         ).fetchone()
-        if not row or not row[0]:
-            return JSONResponse(status_code=404, content={"detail": "no_events", "message": "No ingested events for this market"})
-        return {"market_id": market_id, "asset_id": row[0]}
+        if row and row[0]:
+            return {"market_id": market_id, "asset_id": row[0]}
+        # Fallback: discovered market with outcomes (token_id) but no events with asset_id yet
+        asset_id = _asset_id_from_markets(conn, canonical, normalized, market_id)
+        if asset_id:
+            return {"market_id": market_id, "asset_id": asset_id}
+        return JSONResponse(status_code=404, content={"detail": "no_events", "message": "No ingested events for this market"})
     finally:
         conn.close()
 

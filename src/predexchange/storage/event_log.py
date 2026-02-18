@@ -103,3 +103,44 @@ def prepare_polymarket_row(
     event_type, market_id, asset_id, exchange_ts = _extract_event_meta(payload)
     payload_json = json.dumps(payload)
     return (venue, channel, event_type, market_id, asset_id, exchange_ts, ingest_ts, payload_json)
+
+
+def prepare_polymarket_rows(
+    payload: dict[str, Any],
+    ingest_ts: int,
+    venue: str = "polymarket",
+    channel: str = "market",
+) -> list[tuple[str, str, str, str, str | None, int | None, int, str]]:
+    """
+    Build raw_events row(s) from a Polymarket WS message.
+    For 'price_change', returns one row per price_changes entry (asset_id is inside each entry).
+    For other messages, returns a single row (same as prepare_polymarket_row).
+    """
+    event_type = str(payload.get("event_type", "unknown"))
+    market_id = normalize_condition_id(str(payload.get("market") or payload.get("market_id") or ""))
+    ts = payload.get("timestamp")
+    try:
+        exchange_ts = int(ts) if ts is not None else None
+    except (TypeError, ValueError):
+        exchange_ts = None
+    if isinstance(exchange_ts, str):
+        try:
+            exchange_ts = int(exchange_ts)
+        except (TypeError, ValueError):
+            exchange_ts = None
+    payload_json = json.dumps(payload)
+
+    if event_type == "price_change":
+        changes = payload.get("price_changes") or []
+        rows = []
+        for pc in changes:
+            if not isinstance(pc, dict):
+                continue
+            asset_id = pc.get("asset_id")
+            if asset_id is not None:
+                asset_id = str(asset_id).strip() or None
+            if not asset_id:
+                continue
+            rows.append((venue, channel, event_type, market_id, asset_id, exchange_ts, ingest_ts, payload_json))
+        return rows if rows else [prepare_polymarket_row(payload, ingest_ts, venue, channel)]
+    return [prepare_polymarket_row(payload, ingest_ts, venue, channel)]

@@ -42,13 +42,16 @@ export default function MarketDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [windowMin, setWindowMin] = useState(30);
+  const isInitialLoad = assetId === null && !error;
 
   const fetchData = useCallback(() => {
     if (!marketId) return;
-    setLoading(true);
-    setError(null);
-    setChartSeries([]);
-    setBookSnapshots([]);
+    if (isInitialLoad) {
+      setLoading(true);
+      setError(null);
+      setChartSeries([]);
+      setBookSnapshots([]);
+    }
     fetch(`${API}/markets/${encodeURIComponent(marketId)}/asset`)
       .then((r) => {
         if (!r.ok) {
@@ -98,7 +101,7 @@ export default function MarketDetailPage() {
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
-  }, [marketId, windowMin]);
+  }, [marketId, windowMin, isInitialLoad]);
 
   useEffect(() => {
     fetchData();
