@@ -79,11 +79,14 @@ CREATE TABLE IF NOT EXISTS sim_runs (
 """
 
 
-def get_connection(db_path: str | Path) -> DuckDBPyConnection:
-    """Return a DuckDB connection. Caller must close or use as context manager."""
+def get_connection(db_path: str | Path, read_only: bool = False) -> DuckDBPyConnection:
+    """Return a DuckDB connection. Caller must close or use as context manager.
+    Use read_only=True when another process may be writing (e.g. predex track start)
+    so the API can read while ingestion holds the write lock."""
     path = Path(db_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return duckdb.connect(str(path))
+    if not read_only:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    return duckdb.connect(str(path), read_only=read_only)
 
 
 def init_schema(conn: DuckDBPyConnection) -> None:

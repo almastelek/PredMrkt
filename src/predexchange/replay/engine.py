@@ -8,6 +8,14 @@ from typing import Any, Iterator
 from predexchange.orderbook.aggregator import OrderBookAggregator
 
 
+def _canonical_market_id(s: str) -> str:
+    """Strip 0x and lowercase so Gamma (no 0x) and WS (0x) market_ids match."""
+    s = (s or "").strip()
+    if s.startswith("0x"):
+        s = s[2:]
+    return s.lower()
+
+
 def stream_raw_events(
     conn: Any,
     market_id: str | None = None,
@@ -18,8 +26,8 @@ def stream_raw_events(
     conditions = []
     params = []
     if market_id:
-        conditions.append("market_id = ?")
-        params.append(market_id)
+        conditions.append("LOWER(REPLACE(TRIM(market_id), '0x', '')) = ?")
+        params.append(_canonical_market_id(market_id))
     if start_ts is not None:
         conditions.append("ingest_ts >= ?")
         params.append(start_ts)
@@ -64,7 +72,9 @@ def replay_to_mid_series(
     out: list[tuple[int, float | None]] = []
     for payload, ingest_ts in stream_raw_events(conn, market_id=market_id, start_ts=start_ts, end_ts=end_ts):
         aggregator.on_message(payload, ingest_ts)
-        eng = aggregator.get_engine(market_id, asset_id)
+        # Engine is keyed by market_id from payload (e.g. 0x...) not request (e.g. no 0x)
+        payload_market = str(payload.get("market") or payload.get("market_id") or market_id)
+        eng = aggregator.get_engine(payload_market, asset_id)
         mid = eng.mid_price if eng else None
         out.append((ingest_ts, mid))
     return out

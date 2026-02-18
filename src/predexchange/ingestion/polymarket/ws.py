@@ -52,8 +52,8 @@ async def run_ws_ingestion(
                 retries = 0
                 log.info("ws_connected", url=ws_url, asset_count=len(asset_ids))
 
-                # Subscribe to market channel with asset IDs
-                sub = {"type": "MARKET", "assets_ids": asset_ids}
+                # Subscribe to market channel (Polymarket docs: type "market", assets_ids)
+                sub = {"type": "market", "assets_ids": asset_ids}
                 await ws.send(json.dumps(sub))
                 log.info("ws_subscribed", assets=len(asset_ids))
 

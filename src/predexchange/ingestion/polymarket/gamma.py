@@ -61,7 +61,11 @@ def _parse_outcomes(
 
 def parse_market(raw: dict[str, Any], venue: str = "polymarket") -> Market:
     """Convert Gamma API market object to canonical Market."""
-    condition_id = raw.get("conditionId") or raw.get("condition_id") or ""
+    from predexchange.storage.event_log import normalize_condition_id
+
+    condition_id = normalize_condition_id(
+        str(raw.get("conditionId") or raw.get("condition_id") or "")
+    )
     market_id = condition_id or str(raw.get("id", ""))
     volume_24h = float(raw.get("volume24hr") or raw.get("volume24hr") or raw.get("volume", 0) or 0)
     liquidity = float(raw.get("liquidity") or raw.get("liquidityNum") or 0)

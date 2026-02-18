@@ -2,31 +2,61 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from predexchange.config import get_settings
-from predexchange.storage.db import get_connection, init_schema
-from predexchange.storage.event_log import log_stats
+from predexchange.replay.engine import replay_to_mid_series
+from predexchange.storage.db import get_connection
+from predexchange.storage.event_log import log_stats, normalize_condition_id
 from predexchange.storage.markets import list_markets as storage_list_markets
 from predexchange.simulation.runner import get_run_result
+
+# Set by run_api() so lifespan can start ingestion in the same process (avoids DuckDB cross-process lock).
+_run_with_ingestion = False
 
 
 def _get_conn():
     settings = get_settings()
-    conn = get_connection(settings.db_path)
-    init_schema(conn)
+    # With ingestion in-process, DuckDB requires same config for all connections to the same file; use read_only=False to match ingestion.
+    read_only = not _run_with_ingestion
+    conn = get_connection(settings.db_path, read_only=read_only)
     return conn
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    ingestion_task = None
+    ingestion_stop = None
+    ingestion_manager = None
+
+    if _run_with_ingestion:
+        settings = get_settings()
+        from predexchange.ingestion.manager import IngestionManager
+
+        ingestion_manager = IngestionManager(
+            db_path=settings.db_path,
+            ws_url=settings.clob_ws_url,
+            event_batch_size=settings.event_batch_size,
+            reconnect_base_delay_sec=settings.reconnect_base_delay_sec,
+            reconnect_max_delay_sec=settings.reconnect_max_delay_sec,
+            reconnect_max_retries=settings.reconnect_max_retries,
+        )
+        ingestion_stop = asyncio.Event()
+        ingestion_task = asyncio.create_task(ingestion_manager.run(stop_event=ingestion_stop))
+
     yield
-    # No persistent connection to close (we open per-request)
+
+    if ingestion_task is not None and ingestion_stop is not None and ingestion_manager is not None:
+        ingestion_stop.set()
+        await ingestion_task
+        ingestion_manager.close()
 
 
 app = FastAPI(title="PredExchange API", version="0.1.0", lifespan=lifespan)
@@ -39,10 +69,18 @@ def health() -> dict[str, str]:
 
 
 @app.get("/markets")
-def markets_list(tracked_only: bool = False) -> list[dict[str, Any]]:
+def markets_list(
+    tracked_only: bool = False,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    """List markets with optional limit/offset. Returns { markets, total }."""
     conn = _get_conn()
     try:
-        return storage_list_markets(conn, tracked_only=tracked_only)
+        all_markets = storage_list_markets(conn, tracked_only=tracked_only)
+        total = len(all_markets)
+        markets = all_markets[offset : offset + limit]
+        return {"markets": markets, "total": total}
     finally:
         conn.close()
 
@@ -62,6 +100,83 @@ def sim_runs_list() -> list[str]:
     try:
         rows = conn.execute("SELECT run_id FROM sim_runs ORDER BY created_at DESC LIMIT 50").fetchall()
         return [r[0] for r in rows]
+    finally:
+        conn.close()
+
+
+@app.get("/markets/{market_id}/timeseries")
+def market_timeseries(
+    market_id: str,
+    asset_id: str = Query(..., description="Asset (token) ID for this market"),
+    start_ts: int | None = Query(None),
+    end_ts: int | None = Query(None),
+    max_points: int = Query(500, ge=1, le=2000),
+) -> dict[str, Any]:
+    """Replay and return mid-price time series for a market. Same data as replay engine."""
+    market_id = normalize_condition_id(market_id)
+    conn = _get_conn()
+    try:
+        series = replay_to_mid_series(conn, market_id, asset_id, start_ts=start_ts, end_ts=end_ts)
+        if len(series) > max_points:
+            step = len(series) // max_points
+            series = series[:: max(1, step)][:max_points]
+        return {"market_id": market_id, "asset_id": asset_id, "series": [{"t": t, "mid": m} for t, m in series]}
+    finally:
+        conn.close()
+
+
+def _canonical_market_id(s: str) -> str:
+    """Strip 0x and lowercase so Gamma (no 0x) and WS (0x) market_ids match."""
+    s = (s or "").strip()
+    if s.startswith("0x"):
+        s = s[2:]
+    return s.lower()
+
+
+@app.get("/markets/{market_id}/asset")
+def market_asset(market_id: str):
+    """Return first asset_id for a market (from raw_events). Used to drive timeseries. 404 if no events."""
+    canonical = _canonical_market_id(market_id)
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            """SELECT DISTINCT asset_id FROM raw_events
+               WHERE LOWER(REPLACE(TRIM(market_id), '0x', '')) = ? LIMIT 1""",
+            [canonical],
+        ).fetchone()
+        if not row or not row[0]:
+            return JSONResponse(status_code=404, content={"detail": "no_events", "message": "No ingested events for this market"})
+        return {"market_id": market_id, "asset_id": row[0]}
+    finally:
+        conn.close()
+
+
+@app.get("/events/by_market")
+def events_by_market(limit: int = Query(30, ge=1, le=100)) -> list[dict[str, Any]]:
+    """Event counts per market (for bar charts). Joins markets table for title when available."""
+    conn = _get_conn()
+    try:
+        # Normalize condition_id for join: strip 0x and lowercase so Gamma (sometimes no 0x) matches WS (0x)
+        rows = conn.execute(
+            """
+            WITH counts AS (
+                SELECT market_id, COUNT(*) AS cnt
+                FROM raw_events
+                GROUP BY market_id
+                ORDER BY cnt DESC
+                LIMIT ?
+            )
+            SELECT c.market_id, c.cnt, m.title
+            FROM counts c
+            LEFT JOIN markets m ON
+                LOWER(REPLACE(TRIM(m.market_id), '0x', '')) = LOWER(REPLACE(TRIM(c.market_id), '0x', ''))
+            """,
+            [limit],
+        ).fetchall()
+        return [
+            {"market_id": r[0], "event_count": r[1], "title": (r[2] or "").strip() or None}
+            for r in rows
+        ]
     finally:
         conn.close()
 
@@ -87,6 +202,8 @@ def sim_run_detail(run_id: str) -> dict[str, Any] | None:
         conn.close()
 
 
-def run_api(host: str = "127.0.0.1", port: int = 8000) -> None:
+def run_api(host: str = "127.0.0.1", port: int = 8000, with_ingestion: bool = False) -> None:
+    global _run_with_ingestion
+    _run_with_ingestion = with_ingestion
     import uvicorn
     uvicorn.run("predexchange.api.main:app", host=host, port=port, reload=False)

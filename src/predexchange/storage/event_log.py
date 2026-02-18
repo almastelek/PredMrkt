@@ -9,10 +9,20 @@ if TYPE_CHECKING:
     from duckdb import DuckDBPyConnection
 
 
+def normalize_condition_id(s: str) -> str:
+    """Canonicalize condition_id / market for matching (Gamma and CLOB WS use 0x + 64 hex)."""
+    s = (s or "").strip()
+    if not s:
+        return s
+    if s.startswith("0x"):
+        return "0x" + s[2:].lower()
+    return s.lower() if len(s) == 64 and all(c in "0123456789abcdefABCDEF" for c in s) else s
+
+
 def _extract_event_meta(payload: dict[str, Any]) -> tuple[str, str, str | None, int | None]:
     """Extract venue-level event_type, market_id, asset_id, exchange_ts from Polymarket-style message."""
     event_type = str(payload.get("event_type", "unknown"))
-    market_id = str(payload.get("market") or payload.get("market_id") or "")
+    market_id = normalize_condition_id(str(payload.get("market") or payload.get("market_id") or ""))
     asset_id = payload.get("asset_id")
     if asset_id is not None:
         asset_id = str(asset_id)
