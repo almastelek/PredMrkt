@@ -159,3 +159,13 @@ Assessment of the API, web app, and backend as of the codebase review. Use this 
 - **Weaknesses:** Docs and deployment are minimal; no API or frontend tests; some inconsistency in API errors and web copy (event vs market); Compare and Sim pages are thinner than Home and event detail.
 
 Focusing on **documentation**, **API consistency**, and a **shared API client + Sim/Compare polish** will improve day-to-day use and set you up for deployment and new features (multi-outcome, Kalshi, auth) when you need them.
+
+---
+
+## 5. Sports / other venues (future)
+
+A **sports page** or sports-specific integration would mean a separate WebSocket (and possibly REST) client with its own docs and message shapes. Options when you get there:
+
+- Add a dedicated sports ingestion module (e.g. `ingestion/sports/` or a specific provider) and normalize to the same `raw_events`-style log or a separate table.
+- Expose a **sports** section in the web app (e.g. `/sports` or a category filter “Sports”) once that data is available.
+- Reuse the same event/market terminology and chart patterns (mid, spread, OFI) so the UI stays consistent across Polymarket and sports.

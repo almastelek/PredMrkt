@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from predexchange.api.schemas import (
+    ErrorResponse,
     EventByMarketItem,
     EventsStatsResponse,
     HealthResponse,
@@ -273,17 +274,20 @@ def _market_meta_from_db(conn, canonical: str, normalized: str, market_id_param:
     return (title, category)
 
 
-@app.get("/markets/{market_id}/asset")
+@app.get(
+    "/markets/{market_id}/asset",
+    response_model=MarketAssetResponse,
+    responses={404: {"description": "No events for this market", "model": ErrorResponse}},
+)
 def market_asset(market_id: str):
     """Return asset_id and optional title/category for an event (condition). 404 if unknown."""
     market_id = (market_id or "").strip()
     if not market_id:
-        return JSONResponse(status_code=404, content={"detail": "no_events", "message": "No ingested events for this market"})
+        return _error_json("no_events", "No ingested events for this market")
     canonical = _canonical_market_id(market_id)
     normalized = normalize_condition_id(market_id)  # 0x + lower if hex
     conn = _get_conn()
     try:
-        # Prefer asset_id from raw_events (proves we have ingested data for this market)
         row = conn.execute(
             """SELECT DISTINCT asset_id FROM raw_events
                WHERE asset_id IS NOT NULL AND TRIM(asset_id) != ''
@@ -297,26 +301,24 @@ def market_asset(market_id: str):
         if not asset_id:
             asset_id = _asset_id_from_markets(conn, canonical, normalized, market_id)
         if not asset_id:
-            return JSONResponse(status_code=404, content={"detail": "no_events", "message": "No ingested events for this market"})
+            return _error_json("no_events", "No ingested events for this market")
         title, category = _market_meta_from_db(conn, canonical, normalized, market_id)
-        out: dict[str, Any] = {"market_id": market_id, "asset_id": asset_id}
-        if title is not None:
-            out["title"] = title
-        if category is not None:
-            out["category"] = category
-        return out
+        return MarketAssetResponse(market_id=market_id, asset_id=asset_id, title=title, category=category)
     finally:
         conn.close()
 
 
-@app.get("/events/by_market")
+@app.get("/events/by_market", response_model=list[EventByMarketItem])
 def events_by_market(
     limit: int = Query(40, ge=1, le=100),
     sparkline_buckets: int = Query(12, ge=0, le=48),
-) -> list[dict[str, Any]]:
-    """Event counts per event (condition). Joins markets for title/category. Optional sparkline = counts per 5-min bucket."""
+    category: str | None = Query(None, description="Filter by market category (e.g. Politics, Sports)"),
+) -> list[EventByMarketItem]:
+    """Event counts per event (condition). Joins markets for title/category. Optional category filter and sparkline."""
     conn = _get_conn()
     try:
+        # Fetch more when filtering by category so we have enough after filter
+        fetch_limit = limit * 3 if category else limit
         rows = conn.execute(
             """
             WITH counts AS (
@@ -325,13 +327,18 @@ def events_by_market(
                 GROUP BY market_id
                 ORDER BY cnt DESC
                 LIMIT ?
+            ),
+            joined AS (
+                SELECT c.market_id, c.cnt, m.title, m.category
+                FROM counts c
+                LEFT JOIN markets m ON
+                    LOWER(REPLACE(TRIM(m.market_id), '0x', '')) = LOWER(REPLACE(TRIM(c.market_id), '0x', ''))
             )
-            SELECT c.market_id, c.cnt, m.title, m.category
-            FROM counts c
-            LEFT JOIN markets m ON
-                LOWER(REPLACE(TRIM(m.market_id), '0x', '')) = LOWER(REPLACE(TRIM(c.market_id), '0x', ''))
+            SELECT market_id, cnt, title, category FROM joined
+            WHERE (? IS NULL OR TRIM(COALESCE(category, '')) = ?)
+            LIMIT ?
             """,
-            [limit],
+            [fetch_limit, category, (category or "").strip(), limit],
         ).fetchall()
         out = [
             {
@@ -343,14 +350,13 @@ def events_by_market(
             for r in rows
         ]
         if sparkline_buckets <= 0:
-            return out
-        # Sparkline: last N buckets of 5 min each (ingest_ts in ms)
+            return [EventByMarketItem(**d) for d in out]
         now_ms = int(time.time() * 1000)
         bucket_ms = 5 * 60 * 1000
         start_ms = now_ms - sparkline_buckets * bucket_ms
-        market_ids = [r["market_id"] for r in out]
+        market_ids = [d["market_id"] for d in out]
         if not market_ids:
-            return out
+            return [EventByMarketItem(**d) for d in out]
         placeholders = ",".join("?" for _ in market_ids)
         bucket_rows = conn.execute(
             f"""
@@ -366,36 +372,47 @@ def events_by_market(
             idx = int(bucket_idx) if bucket_idx is not None else -1
             if 0 <= idx < sparkline_buckets:
                 by_market[mid][idx] = cnt
-        for item in out:
-            item["sparkline"] = by_market.get(item["market_id"], [0] * sparkline_buckets)
-        return out
+        for d in out:
+            d["sparkline"] = by_market.get(d["market_id"], [0] * sparkline_buckets)
+        return [EventByMarketItem(**d) for d in out]
     finally:
         conn.close()
 
 
-@app.get("/sim/runs/{run_id}")
-def sim_run_detail(run_id: str) -> dict[str, Any] | None:
+@app.get(
+    "/sim/runs/{run_id}",
+    response_model=SimRunDetailResponse,
+    responses={404: {"description": "Sim run not found", "model": ErrorResponse}},
+)
+def sim_run_detail(run_id: str):
+    """Simulation run detail. 404 if run_id not found."""
     conn = _get_conn()
     try:
         r = get_run_result(conn, run_id)
         if not r:
-            return None
-        return {
-            "run_id": r.run_id,
-            "strategy_name": r.strategy_name,
-            "market_id": r.market_id,
-            "events_processed": r.events_processed,
-            "fill_count": r.fill_count,
-            "realized_pnl": r.realized_pnl,
-            "final_inventory": r.final_inventory,
-            "params": r.params,
-        }
+            return _error_json("not_found", f"Sim run not found: {run_id}")
+        return SimRunDetailResponse(
+            run_id=r.run_id,
+            strategy_name=r.strategy_name,
+            market_id=r.market_id,
+            events_processed=r.events_processed,
+            fill_count=r.fill_count,
+            realized_pnl=r.realized_pnl,
+            final_inventory=r.final_inventory,
+            params=r.params or {},
+        )
     finally:
         conn.close()
 
 
-def run_api(host: str = "127.0.0.1", port: int = 8000, with_ingestion: bool = False) -> None:
-    global _run_with_ingestion
+def run_api(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    with_ingestion: bool = False,
+    profile: str | None = None,
+) -> None:
+    global _run_with_ingestion, _config_profile
     _run_with_ingestion = with_ingestion
+    _config_profile = profile
     import uvicorn
     uvicorn.run("predexchange.api.main:app", host=host, port=port, reload=False)
