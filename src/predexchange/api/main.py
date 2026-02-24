@@ -13,6 +13,15 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from predexchange.api.schemas import (
+    EventByMarketItem,
+    EventsStatsResponse,
+    HealthResponse,
+    MarketAssetResponse,
+    MarketListItem,
+    MarketsListResponse,
+    SimRunDetailResponse,
+)
 from predexchange.config import get_settings
 from predexchange.replay.engine import (
     replay_to_book_snapshots,
@@ -26,10 +35,11 @@ from predexchange.simulation.runner import get_run_result
 
 # Set by run_api() so lifespan can start ingestion in the same process (avoids DuckDB cross-process lock).
 _run_with_ingestion = False
+_config_profile: str | None = None
 
 
 def _get_conn():
-    settings = get_settings()
+    settings = get_settings(_config_profile)
     # With ingestion in-process, DuckDB requires same config for all connections to the same file; use read_only=False to match ingestion.
     read_only = not _run_with_ingestion
     conn = get_connection(settings.db_path, read_only=read_only)
@@ -43,7 +53,7 @@ async def lifespan(app: FastAPI):
     ingestion_manager = None
 
     if _run_with_ingestion:
-        settings = get_settings()
+        settings = get_settings(_config_profile)
         from predexchange.ingestion.manager import IngestionManager
 
         ingestion_manager = IngestionManager(
@@ -69,33 +79,47 @@ app = FastAPI(title="PredExchange API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def _error_json(code: str, message: str, status_code: int = 404) -> JSONResponse:
+    """Return consistent error JSON: { detail, code }."""
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": message, "code": code},
+    )
 
 
-@app.get("/markets")
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    return HealthResponse(status="ok")
+
+
+@app.get("/markets", response_model=MarketsListResponse)
 def markets_list(
     tracked_only: bool = False,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-) -> dict[str, Any]:
-    """List markets with optional limit/offset. Returns { markets, total }."""
+) -> MarketsListResponse:
+    """List markets with optional limit/offset."""
     conn = _get_conn()
     try:
         all_markets = storage_list_markets(conn, tracked_only=tracked_only)
         total = len(all_markets)
         markets = all_markets[offset : offset + limit]
-        return {"markets": markets, "total": total}
+        return MarketsListResponse(markets=markets, total=total)
     finally:
         conn.close()
 
 
-@app.get("/events/stats")
-def events_stats() -> dict[str, Any]:
+@app.get("/events/stats", response_model=EventsStatsResponse)
+def events_stats() -> EventsStatsResponse:
     conn = _get_conn()
     try:
-        return log_stats(conn)
+        data = log_stats(conn)
+        return EventsStatsResponse(
+            total_events=data["total_events"],
+            min_ingest_ts=data.get("min_ingest_ts"),
+            max_ingest_ts=data.get("max_ingest_ts"),
+            by_market=data.get("by_market", []),
+        )
     finally:
         conn.close()
 
