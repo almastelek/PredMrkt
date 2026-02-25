@@ -29,7 +29,7 @@ from predexchange.replay.engine import (
     replay_to_chart_series,
     replay_to_mid_series,
 )
-from predexchange.storage.db import get_connection
+from predexchange.storage.db import get_connection, init_schema
 from predexchange.storage.event_log import log_stats, normalize_condition_id
 from predexchange.storage.markets import list_markets as storage_list_markets
 from predexchange.simulation.runner import get_run_result
@@ -49,6 +49,14 @@ def _get_conn():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure schema (including last_mid) exists
+    settings = get_settings(_config_profile)
+    conn = get_connection(settings.db_path, read_only=False)
+    try:
+        init_schema(conn)
+    finally:
+        conn.close()
+
     ingestion_task = None
     ingestion_stop = None
     ingestion_manager = None
@@ -156,6 +164,18 @@ def market_timeseries(
         conn.close()
 
 
+def _upsert_last_mid(conn: Any, market_id: str, asset_id: str, mid: float) -> None:
+    """Write last known mid for this market (canonical outcome only). One row per market_id so we don't mix Yes/No."""
+    if mid is None or not (0 <= mid <= 1):
+        return
+    now_ms = int(time.time() * 1000)
+    conn.execute("DELETE FROM last_mid WHERE market_id = ?", [market_id])
+    conn.execute(
+        "INSERT INTO last_mid (market_id, asset_id, mid, updated_at) VALUES (?, ?, ?, ?)",
+        [market_id, asset_id, mid, now_ms],
+    )
+
+
 def _chart_window_ms(start_ts: int | None, end_ts: int | None, default_minutes: int = 30) -> tuple[int | None, int | None]:
     """If both None, return (now - default_minutes, now) in ms."""
     if start_ts is not None and end_ts is not None:
@@ -192,6 +212,10 @@ def market_chart_series(
             bucket_ms=resolution,
             depth_n=depth_n,
         )
+        if series:
+            last = series[-1]
+            if last.get("mid") is not None:
+                _upsert_last_mid(conn, market_id, asset_id, float(last["mid"]))
         return {"market_id": market_id, "asset_id": asset_id, "series": series}
     finally:
         conn.close()
@@ -222,6 +246,10 @@ def market_chart_book_heatmap(
             tick_size=tick_size,
             ticks_around_mid=ticks_around_mid,
         )
+        if snapshots:
+            last = snapshots[-1]
+            if last.get("mid") is not None:
+                _upsert_last_mid(conn, market_id, asset_id, float(last["mid"]))
         return {"market_id": market_id, "asset_id": asset_id, "snapshots": snapshots}
     finally:
         conn.close()
@@ -235,8 +263,12 @@ def _canonical_market_id(s: str) -> str:
     return s.lower()
 
 
-def _asset_id_from_markets(conn, canonical: str, normalized: str, market_id_param: str) -> str | None:
-    """Fallback: get first outcome token_id from markets table for this condition_id."""
+def _canonical_asset_id_from_markets(conn, canonical: str, normalized: str, market_id_param: str) -> str | None:
+    """
+    Get the canonical outcome token_id for this condition_id from the markets table.
+    Prefer the 'Yes' outcome so we always show the same side (probability p, not 1-p).
+    If no 'Yes', return first outcome by token_id for deterministic ordering.
+    """
     row = conn.execute(
         """SELECT outcomes FROM markets
            WHERE LOWER(REPLACE(TRIM(market_id), '0x', '')) = ?
@@ -249,9 +281,24 @@ def _asset_id_from_markets(conn, canonical: str, normalized: str, market_id_para
         return None
     try:
         outcomes = json.loads(row[0]) if isinstance(row[0], str) else row[0]
-        for o in (outcomes or []):
-            if isinstance(o, dict) and o.get("token_id"):
-                return str(o["token_id"])
+        if not outcomes or not isinstance(outcomes, list):
+            return None
+        # Prefer outcome named "Yes" (binary markets: Yes = p, No = 1-p; we want p)
+        yes_token: str | None = None
+        all_tokens: list[str] = []
+        for o in outcomes:
+            if not isinstance(o, dict) or not o.get("token_id"):
+                continue
+            tid = str(o["token_id"])
+            all_tokens.append(tid)
+            name = (o.get("name") or "").strip().lower()
+            if name == "yes":
+                yes_token = tid
+        if yes_token:
+            return yes_token
+        # No "Yes" found; return deterministic first (e.g. multi-outcome market)
+        if all_tokens:
+            return min(all_tokens)
     except (TypeError, ValueError):
         pass
     return None
@@ -288,18 +335,24 @@ def market_asset(market_id: str):
     normalized = normalize_condition_id(market_id)  # 0x + lower if hex
     conn = _get_conn()
     try:
-        row = conn.execute(
+        # Get all distinct asset_ids so we can pick one deterministically (avoid Yes/No flip)
+        rows = conn.execute(
             """SELECT DISTINCT asset_id FROM raw_events
                WHERE asset_id IS NOT NULL AND TRIM(asset_id) != ''
                  AND (LOWER(REPLACE(TRIM(market_id), '0x', '')) = ?
                       OR TRIM(market_id) = ?
                       OR TRIM(market_id) = ?)
-               LIMIT 1""",
+               ORDER BY asset_id""",
             [canonical, normalized, market_id],
-        ).fetchone()
-        asset_id = row[0] if row and row[0] else None
-        if not asset_id:
-            asset_id = _asset_id_from_markets(conn, canonical, normalized, market_id)
+        ).fetchall()
+        raw_asset_ids = [r[0] for r in rows if r and r[0]]
+        canonical_asset = _canonical_asset_id_from_markets(conn, canonical, normalized, market_id)
+        if canonical_asset and canonical_asset in raw_asset_ids:
+            asset_id = canonical_asset
+        elif raw_asset_ids:
+            asset_id = min(raw_asset_ids)
+        else:
+            asset_id = canonical_asset
         if not asset_id:
             return _error_json("no_events", "No ingested events for this market")
         title, category = _market_meta_from_db(conn, canonical, normalized, market_id)
@@ -349,6 +402,21 @@ def events_by_market(
             }
             for r in rows
         ]
+        # Last known mid (probability) per market (one row per market_id, latest updated_at)
+        try:
+            mid_rows = conn.execute(
+                """
+                SELECT l.market_id, l.mid FROM last_mid l
+                JOIN (SELECT market_id, MAX(updated_at) AS updated_at FROM last_mid GROUP BY market_id) t
+                ON l.market_id = t.market_id AND l.updated_at = t.updated_at
+                """
+            ).fetchall()
+            mid_by_normalized = {normalize_condition_id(r[0]): r[1] for r in mid_rows}
+            for d in out:
+                d["last_mid"] = mid_by_normalized.get(normalize_condition_id(d["market_id"]))
+        except Exception:
+            for d in out:
+                d["last_mid"] = None
         if sparkline_buckets <= 0:
             return [EventByMarketItem(**d) for d in out]
         now_ms = int(time.time() * 1000)

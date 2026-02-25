@@ -12,6 +12,7 @@ type EventRow = {
   title?: string | null;
   category?: string | null;
   sparkline?: number[];
+  last_mid?: number | null;
 };
 
 function Sparkline({ values, width = 96, height = 28 }: { values: number[]; width?: number; height?: number }) {
@@ -176,6 +177,11 @@ export default function Home() {
                         <span style={{ color: '#e0e0e0' }} title={label}>{shortLabel}</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
+                        {row.last_mid != null && (
+                          <span style={{ fontSize: 15, fontWeight: 600, color: '#7d7', minWidth: 48 }}>
+                            {(row.last_mid * 100).toFixed(0)}%
+                          </span>
+                        )}
                         {row.sparkline && row.sparkline.length > 0 && (
                           <Sparkline values={row.sparkline} width={100} height={28} />
                         )}

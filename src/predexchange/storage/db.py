@@ -76,6 +76,15 @@ CREATE TABLE IF NOT EXISTS sim_runs (
     events_processed INTEGER,
     created_at      BIGINT
 );
+
+-- Last known mid price per (market_id, asset_id), updated when chart/series or book_heatmap is served
+CREATE TABLE IF NOT EXISTS last_mid (
+    market_id       VARCHAR NOT NULL,
+    asset_id        VARCHAR NOT NULL,
+    mid             DOUBLE NOT NULL,
+    updated_at      BIGINT NOT NULL,
+    PRIMARY KEY (market_id, asset_id)
+);
 """
 
 

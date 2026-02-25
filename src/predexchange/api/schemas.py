@@ -50,6 +50,7 @@ class EventByMarketItem(BaseModel):
     title: str | None = None
     category: str | None = None
     sparkline: list[int] | None = None
+    last_mid: float | None = Field(None, description="Last known mid price (probability) for this event")
 
 
 # --- Market asset (event metadata + first outcome token) ---

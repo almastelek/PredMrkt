@@ -120,6 +120,7 @@ export default function MarketDetailPage() {
   if (!assetId) return null;
 
   const headingLabel = title && title.trim() ? title : (marketId.length > 32 ? `${marketId.slice(0, 29)}…` : marketId);
+  const lastMid = chartSeries.length > 0 ? chartSeries[chartSeries.length - 1]?.mid : null;
 
   return (
     <div style={{ maxWidth: 1000 }}>
@@ -130,6 +131,12 @@ export default function MarketDetailPage() {
             <span style={{ marginLeft: 10, fontSize: 14, fontWeight: 400, color: '#888' }}>({category})</span>
           )}
         </h2>
+        {lastMid != null && (
+          <div style={{ padding: '6px 12px', background: '#1a2a1a', borderRadius: 6, border: '1px solid #2a4a2a' }}>
+            <span style={{ color: '#888', fontSize: 12 }}>Probability</span>
+            <div style={{ fontSize: 20, fontWeight: 600, color: '#7d7' }}>{(lastMid * 100).toFixed(1)}%</div>
+          </div>
+        )}
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#888', fontSize: 14 }}>
           Window:
           <select
