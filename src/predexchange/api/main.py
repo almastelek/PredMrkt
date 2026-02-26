@@ -165,15 +165,18 @@ def market_timeseries(
 
 
 def _upsert_last_mid(conn: Any, market_id: str, asset_id: str, mid: float) -> None:
-    """Write last known mid for this market (canonical outcome only). One row per market_id so we don't mix Yes/No."""
+    """Write last known mid for this (market_id, asset_id). Swallow errors to avoid 500s under concurrent load."""
     if mid is None or not (0 <= mid <= 1):
         return
-    now_ms = int(time.time() * 1000)
-    conn.execute("DELETE FROM last_mid WHERE market_id = ?", [market_id])
-    conn.execute(
-        "INSERT INTO last_mid (market_id, asset_id, mid, updated_at) VALUES (?, ?, ?, ?)",
-        [market_id, asset_id, mid, now_ms],
-    )
+    try:
+        now_ms = int(time.time() * 1000)
+        conn.execute(
+            """INSERT INTO last_mid (market_id, asset_id, mid, updated_at) VALUES (?, ?, ?, ?)
+               ON CONFLICT (market_id, asset_id) DO UPDATE SET mid = excluded.mid, updated_at = excluded.updated_at""",
+            [market_id, asset_id, mid, now_ms],
+        )
+    except Exception:
+        pass  # avoid 500 when DuckDB conflicts under concurrent chart/series + book_heatmap
 
 
 def _chart_window_ms(start_ts: int | None, end_ts: int | None, default_minutes: int = 30) -> tuple[int | None, int | None]:
