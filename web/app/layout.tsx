@@ -12,6 +12,7 @@ export default function RootLayout({
           <a href="/" style={{ marginRight: 16, color: '#7dd' }}>Home</a>
           <a href="/markets" style={{ marginRight: 16, color: '#7dd' }}>Markets</a>
           <a href="/compare" style={{ marginRight: 16, color: '#7dd' }}>Compare</a>
+          <a href="/sports" style={{ marginRight: 16, color: '#7dd' }}>Sports</a>
           <a href="/sim" style={{ marginRight: 16, color: '#7dd' }}>Sim Runs</a>
         </nav>
         {children}

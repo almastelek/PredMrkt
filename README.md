@@ -48,7 +48,7 @@ uv run predex --help
 - `predex log export` - Export events to Parquet
 - `predex replay run` - Deterministic replay
 - `predex sim run` - Run strategy in simulation
-- `predex api [--with-ingestion] [--profile dev]` - Start API server (optional ingestion; optional config profile)
+- `predex api [--with-ingestion] [--with-sports] [--profile dev]` - Start API server. `--with-ingestion` runs CLOB + Sports WS; `--with-sports` runs only Sports WS (live scores).
 
 ## Config
 

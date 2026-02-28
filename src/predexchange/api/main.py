@@ -32,17 +32,19 @@ from predexchange.replay.engine import (
 from predexchange.storage.db import get_connection, init_schema
 from predexchange.storage.event_log import log_stats, normalize_condition_id
 from predexchange.storage.markets import list_markets as storage_list_markets
+from predexchange.storage.sports import list_sports_games
 from predexchange.simulation.runner import get_run_result
 
-# Set by run_api() so lifespan can start ingestion in the same process (avoids DuckDB cross-process lock).
+# Set by run_api() so lifespan can start ingestion/sports in the same process.
 _run_with_ingestion = False
+_run_with_sports = False
 _config_profile: str | None = None
 
 
 def _get_conn():
     settings = get_settings(_config_profile)
     # With ingestion in-process, DuckDB requires same config for all connections to the same file; use read_only=False to match ingestion.
-    read_only = not _run_with_ingestion
+    read_only = not (_run_with_ingestion or _run_with_sports)
     conn = get_connection(settings.db_path, read_only=read_only)
     return conn
 
@@ -76,12 +78,35 @@ async def lifespan(app: FastAPI):
         ingestion_stop = asyncio.Event()
         ingestion_task = asyncio.create_task(ingestion_manager.run(stop_event=ingestion_stop))
 
+    sports_task = None
+    sports_stop = None
+    if _run_with_sports:
+        from predexchange.ingestion.polymarket.sports_ws import run_sports_ws
+        from predexchange.storage.sports import upsert_sport_result
+
+        settings = get_settings(_config_profile)
+        db_path = settings.db_path
+
+        def _on_sport_result(payload: dict[str, Any], ingest_ts: int) -> None:
+            c = get_connection(db_path, read_only=False)
+            try:
+                init_schema(c)
+                upsert_sport_result(c, payload, ingest_ts)
+            finally:
+                c.close()
+
+        sports_stop = asyncio.Event()
+        sports_task = asyncio.create_task(run_sports_ws(_on_sport_result, stop_event=sports_stop))
+
     yield
 
     if ingestion_task is not None and ingestion_stop is not None and ingestion_manager is not None:
         ingestion_stop.set()
         await ingestion_task
         ingestion_manager.close()
+    if sports_task is not None and sports_stop is not None:
+        sports_stop.set()
+        await sports_task
 
 
 app = FastAPI(title="PredExchange API", version="0.1.0", lifespan=lifespan)
@@ -450,6 +475,20 @@ def events_by_market(
         conn.close()
 
 
+@app.get("/sports/games")
+def sports_games_list(
+    league: str | None = Query(None, description="Filter by league (e.g. nfl, nhl, nba, mlb, cfb, cs2)"),
+    status: str | None = Query(None, description="Filter by status (e.g. InProgress, Scheduled, Final)"),
+    limit: int = Query(200, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    """List sports games from Polymarket Sports WebSocket. Live games first when no status filter."""
+    conn = _get_conn()
+    try:
+        return list_sports_games(conn, league=league, status=status, live_first=True, limit=limit)
+    finally:
+        conn.close()
+
+
 @app.get(
     "/sim/runs/{run_id}",
     response_model=SimRunDetailResponse,
@@ -480,10 +519,12 @@ def run_api(
     host: str = "127.0.0.1",
     port: int = 8000,
     with_ingestion: bool = False,
+    with_sports: bool = False,
     profile: str | None = None,
 ) -> None:
-    global _run_with_ingestion, _config_profile
+    global _run_with_ingestion, _run_with_sports, _config_profile
     _run_with_ingestion = with_ingestion
+    _run_with_sports = with_sports or with_ingestion
     _config_profile = profile
     import uvicorn
     uvicorn.run("predexchange.api.main:app", host=host, port=port, reload=False)

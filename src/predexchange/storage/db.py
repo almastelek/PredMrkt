@@ -85,6 +85,24 @@ CREATE TABLE IF NOT EXISTS last_mid (
     updated_at      BIGINT NOT NULL,
     PRIMARY KEY (market_id, asset_id)
 );
+
+-- Sports: latest game state from Polymarket Sports WebSocket (sport_result)
+CREATE TABLE IF NOT EXISTS sports_games (
+    game_id             BIGINT PRIMARY KEY,
+    league_abbreviation  VARCHAR NOT NULL,
+    slug                VARCHAR NOT NULL,
+    home_team           VARCHAR NOT NULL,
+    away_team           VARCHAR NOT NULL,
+    status              VARCHAR NOT NULL,
+    score               VARCHAR,
+    period              VARCHAR,
+    elapsed             VARCHAR,
+    live                BOOLEAN NOT NULL,
+    ended               BOOLEAN NOT NULL,
+    turn                VARCHAR,
+    finished_timestamp  VARCHAR,
+    updated_at          BIGINT NOT NULL
+);
 """
 
 
