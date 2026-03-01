@@ -144,6 +144,99 @@ def fetch_markets_by_game_id(
     return markets
 
 
+def fetch_market_by_slug(
+    slug: str,
+    base_url: str | None = None,
+    timeout: float = 15.0,
+) -> Market | None:
+    """Fetch a single market by slug from Gamma API. Returns None on 404 or error."""
+    if not slug or not slug.strip():
+        return None
+    base = (base_url or GAMMA_MARKETS_URL).rstrip("/")
+    url = f"{base}/slug/{slug.strip()}"
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(url)
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            row = resp.json()
+        if isinstance(row, dict):
+            return parse_market(row)
+        return None
+    except Exception as e:
+        log.debug("fetch_market_by_slug_failed", slug=slug, error=str(e))
+        return None
+
+
+def fetch_markets_by_slug(
+    slug: str,
+    base_url: str | None = None,
+    limit: int = 10,
+    timeout: float = 15.0,
+) -> list[Market]:
+    """Fetch markets matching slug from Gamma API (slug query param, list endpoint)."""
+    if not slug or not slug.strip():
+        return []
+    base = (base_url or GAMMA_MARKETS_URL).rstrip("/")
+    url = base if "/markets" in base else base + "/markets"
+    params = {"slug": [slug.strip()], "limit": limit}
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        log.debug("fetch_markets_by_slug_failed", slug=slug, error=str(e))
+        return []
+    if not isinstance(data, list):
+        data = data.get("data", data) if isinstance(data, dict) else []
+    markets = []
+    for row in data:
+        try:
+            markets.append(parse_market(row))
+        except Exception as e:
+            log.warning("skip_market", market_id=row.get("conditionId"), error=str(e))
+    return markets
+
+
+def fetch_markets_from_event_slug(
+    slug: str,
+    events_url: str | None = None,
+    timeout: float = 15.0,
+) -> list[Market]:
+    """
+    Fetch event by slug from Gamma API (GET /events/slug/{slug}).
+    Returns markets from the event. This is the primary way Polymarket links sports games to markets.
+    """
+    if not slug or not slug.strip():
+        return []
+    base = (events_url or GAMMA_EVENTS_URL).rstrip("/")
+    url = f"{base}/slug/{slug.strip()}"
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(url)
+            if resp.status_code == 404:
+                return []
+            resp.raise_for_status()
+            event = resp.json()
+    except Exception as e:
+        log.debug("fetch_event_by_slug_failed", slug=slug, error=str(e))
+        return []
+    if not isinstance(event, dict):
+        return []
+    raw_markets = event.get("markets") or event.get("data", {}).get("markets", [])
+    if not isinstance(raw_markets, list):
+        raw_markets = []
+    markets = []
+    for row in raw_markets:
+        try:
+            markets.append(parse_market(row))
+        except Exception as e:
+            log.warning("skip_market", market_id=row.get("conditionId"), error=str(e))
+    return markets
+
+
 def select_top_markets(
     markets: list[Market],
     track_count: int,

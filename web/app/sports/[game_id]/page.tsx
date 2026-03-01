@@ -29,6 +29,8 @@ type GameDetail = {
   market_id: string | null;
   asset_id: string | null;
   start_ts: number | null;
+  event_slug?: string | null;
+  league_slug?: string | null;
 };
 
 type SeriesPoint = { t: number; mid: number; time: string };
@@ -193,10 +195,22 @@ export default function SportsGameDetailPage() {
       </div>
 
       {!detail.market_id || !detail.asset_id ? (
-        <p style={{ color: '#888' }}>
-          No Polymarket market linked for this game. Price feed will appear here
-          when a market is available for this game.
-        </p>
+        <div style={{ color: '#888' }}>
+          <p style={{ marginBottom: 12 }}>
+            No Polymarket market linked for this game. Price feed will appear here
+            when a market is available for this game.
+          </p>
+          {detail.event_slug && detail.league_slug && (
+            <a
+              href={`https://polymarket.com/sports/${detail.league_slug}/${detail.event_slug}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#6af', fontSize: 14 }}
+            >
+              View this game on Polymarket →
+            </a>
+          )}
+        </div>
       ) : series.length === 0 ? (
         <p style={{ color: '#888' }}>
           No price data yet. Run ingestion and wait for events, or the game may

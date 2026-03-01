@@ -32,7 +32,12 @@ from predexchange.replay.engine import (
 from predexchange.storage.db import get_connection, init_schema
 from predexchange.storage.event_log import log_stats, normalize_condition_id
 from predexchange.storage.markets import list_markets as storage_list_markets
-from predexchange.ingestion.polymarket.gamma import fetch_markets_by_game_id
+from predexchange.ingestion.polymarket.gamma import (
+    fetch_market_by_slug,
+    fetch_markets_by_game_id,
+    fetch_markets_by_slug,
+    fetch_markets_from_event_slug,
+)
 from predexchange.storage.sports import get_sports_game, list_sports_games
 from predexchange.simulation.runner import get_run_result
 
@@ -490,6 +495,40 @@ def sports_games_list(
         conn.close()
 
 
+def _sports_game_slug_candidates(game: dict[str, Any]) -> list[str]:
+    """Build slug candidates for Gamma event lookup. Polymarket uses {league}-{home}-{away}-{YYYY-MM-DD}."""
+    candidates = []
+    ws_slug = (game.get("slug") or "").strip().lower()
+    if ws_slug:
+        candidates.append(ws_slug)
+    league = (game.get("league_abbreviation") or "").strip().lower() or "nfl"
+    home = (game.get("home_team") or "").strip()
+    away = (game.get("away_team") or "").strip()
+    if home and away:
+        h = home[:3].lower() if len(home) >= 3 else home.lower()
+        a = away[:3].lower() if len(away) >= 3 else away.lower()
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        built = f"{league}-{h}-{a}-{today}"
+        if built not in candidates:
+            candidates.append(built)
+        swapped = f"{league}-{a}-{h}-{today}"
+        if swapped not in candidates:
+            candidates.append(swapped)
+    if ws_slug and "-" in ws_slug:
+        parts = ws_slug.split("-")
+        if len(parts) >= 5:
+            try:
+                from datetime import datetime
+                _ = datetime.strptime(f"{parts[-3]}-{parts[-2]}-{parts[-1]}", "%Y-%m-%d")
+                swapped_ws = f"{parts[0]}-{parts[2]}-{parts[1]}-" + "-".join(parts[3:])
+                if swapped_ws not in candidates:
+                    candidates.append(swapped_ws)
+            except ValueError:
+                pass
+    return candidates
+
+
 @app.get("/sports/games/{game_id}")
 def sports_game_detail(game_id: str):
     """Game detail with linked Polymarket market for live price chart. 404 if game not found."""
@@ -503,24 +542,65 @@ def sports_game_detail(game_id: str):
         start_ts = game.get("first_live_at")
         if start_ts is None and game.get("updated_at"):
             start_ts = int(game["updated_at"]) - 4 * 3600 * 1000
-        try:
-            markets = fetch_markets_by_game_id(game_id)
+        markets = []
+
+        def try_event_slug(s: str) -> list:
+            if not s:
+                return []
+            try:
+                return fetch_markets_from_event_slug(s)
+            except Exception:
+                return []
+
+        for slug_candidate in _sports_game_slug_candidates(game):
+            markets = try_event_slug(slug_candidate)
             if markets:
-                m = markets[0]
-                market_id = m.condition_id or m.market_id
-                for o in m.outcomes:
-                    if o.name and o.name.strip().lower() == "yes" and o.token_id:
-                        asset_id = o.token_id
-                        break
-                if not asset_id and m.outcomes:
-                    asset_id = m.outcomes[0].token_id
-        except Exception:
-            pass
+                break
+        if not markets:
+            try:
+                markets = fetch_markets_by_game_id(game_id)
+            except Exception:
+                pass
+        game_slug = (game.get("slug") or "").strip().lower()
+        if not markets and game_slug:
+            try:
+                m = fetch_market_by_slug(game_slug)
+                if m:
+                    markets = [m]
+            except Exception:
+                pass
+        if not markets and game_slug:
+            try:
+                markets = fetch_markets_by_slug(game_slug)
+            except Exception:
+                pass
+        if not markets:
+            import structlog
+            structlog.get_logger().info(
+                "sports_game_no_market",
+                game_id=game_id,
+                slug_from_ws=game.get("slug"),
+                candidates=_sports_game_slug_candidates(game),
+            )
+        if markets:
+            m = markets[0]
+            market_id = m.condition_id or m.market_id
+            for o in m.outcomes:
+                if o.name and o.name.strip().lower() == "yes" and o.token_id:
+                    asset_id = o.token_id
+                    break
+            if not asset_id and m.outcomes:
+                asset_id = m.outcomes[0].token_id
+        slug_candidates = _sports_game_slug_candidates(game)
+        event_slug = (game.get("slug") or "").strip().lower() or (slug_candidates[0] if slug_candidates else None)
+        league = (game.get("league_abbreviation") or "").strip().lower()
         return {
             "game": game,
             "market_id": market_id,
             "asset_id": asset_id,
             "start_ts": start_ts,
+            "event_slug": event_slug,
+            "league_slug": league or None,
         }
     finally:
         conn.close()

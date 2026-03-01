@@ -10,8 +10,12 @@ if TYPE_CHECKING:
 
 def upsert_sport_result(conn: DuckDBPyConnection, payload: dict[str, Any], updated_at: int) -> None:
     """Upsert one row into sports_games from a sport_result message."""
-    game_id = payload.get("gameId")
-    if game_id is None:
+    raw_id = payload.get("gameId")
+    if raw_id is None:
+        return
+    try:
+        game_id = int(raw_id)
+    except (TypeError, ValueError):
         return
     league = str(payload.get("leagueAbbreviation", ""))
     slug = str(payload.get("slug", ""))
