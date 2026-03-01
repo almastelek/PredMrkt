@@ -101,7 +101,8 @@ CREATE TABLE IF NOT EXISTS sports_games (
     ended               BOOLEAN NOT NULL,
     turn                VARCHAR,
     finished_timestamp  VARCHAR,
-    updated_at          BIGINT NOT NULL
+    updated_at          BIGINT NOT NULL,
+    first_live_at       BIGINT
 );
 """
 
@@ -126,3 +127,11 @@ def init_schema(conn: DuckDBPyConnection) -> None:
             except duckdb.Error as e:
                 if "already exists" not in str(e).lower():
                     raise
+    # Migration: add first_live_at to sports_games if missing (existing DBs)
+    try:
+        info = conn.execute("SELECT name FROM pragma_table_info('sports_games')").fetchall()
+        names = [r[0] for r in info]
+        if "first_live_at" not in names:
+            conn.execute("ALTER TABLE sports_games ADD COLUMN first_live_at BIGINT")
+    except duckdb.Error:
+        pass

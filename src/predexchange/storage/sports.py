@@ -30,8 +30,8 @@ def upsert_sport_result(conn: DuckDBPyConnection, payload: dict[str, Any], updat
         """
         INSERT INTO sports_games (
             game_id, league_abbreviation, slug, home_team, away_team, status, score,
-            period, elapsed, live, ended, turn, finished_timestamp, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            period, elapsed, live, ended, turn, finished_timestamp, updated_at, first_live_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (game_id) DO UPDATE SET
             league_abbreviation = excluded.league_abbreviation,
             slug = excluded.slug,
@@ -45,9 +45,10 @@ def upsert_sport_result(conn: DuckDBPyConnection, payload: dict[str, Any], updat
             ended = excluded.ended,
             turn = excluded.turn,
             finished_timestamp = excluded.finished_timestamp,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            first_live_at = COALESCE(sports_games.first_live_at, CASE WHEN excluded.live = TRUE THEN excluded.updated_at END)
         """,
-        [game_id, league, slug, home, away, status, score, period, elapsed, live, ended, turn, finished_ts, updated_at],
+        [game_id, league, slug, home, away, status, score, period, elapsed, live, ended, turn, finished_ts, updated_at, (updated_at if live else None)],
     )
 
 
@@ -77,7 +78,7 @@ def list_sports_games(
     rows = conn.execute(
         f"""
         SELECT game_id, league_abbreviation, slug, home_team, away_team, status, score,
-               period, elapsed, live, ended, turn, finished_timestamp, updated_at
+               period, elapsed, live, ended, turn, finished_timestamp, updated_at, first_live_at
         FROM sports_games
         WHERE {where}
         ORDER BY {order}
@@ -87,6 +88,30 @@ def list_sports_games(
     ).fetchall()
     cols = [
         "game_id", "league_abbreviation", "slug", "home_team", "away_team", "status", "score",
-        "period", "elapsed", "live", "ended", "turn", "finished_timestamp", "updated_at",
+        "period", "elapsed", "live", "ended", "turn", "finished_timestamp", "updated_at", "first_live_at",
     ]
     return [dict(zip(cols, r)) for r in rows]
+
+
+def get_sports_game(conn: DuckDBPyConnection, game_id: int | str) -> dict[str, Any] | None:
+    """Return one game by game_id or None if not found."""
+    try:
+        gid = int(game_id)
+    except (TypeError, ValueError):
+        return None
+    row = conn.execute(
+        """
+        SELECT game_id, league_abbreviation, slug, home_team, away_team, status, score,
+               period, elapsed, live, ended, turn, finished_timestamp, updated_at, first_live_at
+        FROM sports_games
+        WHERE game_id = ?
+        """,
+        [gid],
+    ).fetchone()
+    if not row:
+        return None
+    cols = [
+        "game_id", "league_abbreviation", "slug", "home_team", "away_team", "status", "score",
+        "period", "elapsed", "live", "ended", "turn", "finished_timestamp", "updated_at", "first_live_at",
+    ]
+    return dict(zip(cols, row))

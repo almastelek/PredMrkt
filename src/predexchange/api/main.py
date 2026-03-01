@@ -32,7 +32,8 @@ from predexchange.replay.engine import (
 from predexchange.storage.db import get_connection, init_schema
 from predexchange.storage.event_log import log_stats, normalize_condition_id
 from predexchange.storage.markets import list_markets as storage_list_markets
-from predexchange.storage.sports import list_sports_games
+from predexchange.ingestion.polymarket.gamma import fetch_markets_by_game_id
+from predexchange.storage.sports import get_sports_game, list_sports_games
 from predexchange.simulation.runner import get_run_result
 
 # Set by run_api() so lifespan can start ingestion/sports in the same process.
@@ -485,6 +486,42 @@ def sports_games_list(
     conn = _get_conn()
     try:
         return list_sports_games(conn, league=league, status=status, live_first=True, limit=limit)
+    finally:
+        conn.close()
+
+
+@app.get("/sports/games/{game_id}")
+def sports_game_detail(game_id: str):
+    """Game detail with linked Polymarket market for live price chart. 404 if game not found."""
+    conn = _get_conn()
+    try:
+        game = get_sports_game(conn, game_id)
+        if not game:
+            return _error_json("not_found", f"Game not found: {game_id}")
+        market_id = None
+        asset_id = None
+        start_ts = game.get("first_live_at")
+        if start_ts is None and game.get("updated_at"):
+            start_ts = int(game["updated_at"]) - 4 * 3600 * 1000
+        try:
+            markets = fetch_markets_by_game_id(game_id)
+            if markets:
+                m = markets[0]
+                market_id = m.condition_id or m.market_id
+                for o in m.outcomes:
+                    if o.name and o.name.strip().lower() == "yes" and o.token_id:
+                        asset_id = o.token_id
+                        break
+                if not asset_id and m.outcomes:
+                    asset_id = m.outcomes[0].token_id
+        except Exception:
+            pass
+        return {
+            "game": game,
+            "market_id": market_id,
+            "asset_id": asset_id,
+            "start_ts": start_ts,
+        }
     finally:
         conn.close()
 

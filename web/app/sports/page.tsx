@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 
 const API = process.env.NEXT_PUBLIC_API || 'http://127.0.0.1:8000';
 const POLL_MS = 5000;
@@ -36,6 +37,10 @@ const LEAGUE_LABELS: Record<string, string> = {
 function GameRow({ g }: { g: SportsGame }) {
   const leagueLabel = LEAGUE_LABELS[g.league_abbreviation?.toLowerCase()] ?? g.league_abbreviation ?? '—';
   return (
+    <Link
+      href={`/sports/${g.game_id}`}
+      style={{ textDecoration: 'none', color: 'inherit', display: 'block', marginBottom: 6 }}
+    >
     <div
       style={{
         display: 'flex',
@@ -45,7 +50,7 @@ function GameRow({ g }: { g: SportsGame }) {
         background: g.live ? '#1a2a1a' : '#161616',
         border: `1px solid ${g.live ? '#2a4a2a' : '#2a2a2a'}`,
         borderRadius: 6,
-        marginBottom: 6,
+        cursor: 'pointer',
       }}
     >
       <span style={{ fontSize: 11, color: '#666', minWidth: 36 }}>{leagueLabel}</span>
@@ -68,6 +73,7 @@ function GameRow({ g }: { g: SportsGame }) {
         <span style={{ fontSize: 10, color: '#888', marginLeft: 'auto' }}>Final</span>
       )}
     </div>
+    </Link>
   );
 }
 

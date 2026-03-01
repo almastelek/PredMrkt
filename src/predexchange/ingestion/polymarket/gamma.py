@@ -119,6 +119,31 @@ def fetch_markets(
     return markets
 
 
+def fetch_markets_by_game_id(
+    game_id: int | str,
+    base_url: str | None = None,
+    limit: int = 10,
+    timeout: float = 15.0,
+) -> list[Market]:
+    """Fetch markets for a sports game from Gamma API (game_id query param)."""
+    base = (base_url or GAMMA_MARKETS_URL).rstrip("/")
+    url = base if "/markets" in base else base + "/markets"
+    params = {"game_id": str(game_id), "limit": limit}
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+    if not isinstance(data, list):
+        data = data.get("data", data) if isinstance(data, dict) else []
+    markets = []
+    for row in data:
+        try:
+            markets.append(parse_market(row))
+        except Exception as e:
+            log.warning("skip_market", market_id=row.get("conditionId"), error=str(e))
+    return markets
+
+
 def select_top_markets(
     markets: list[Market],
     track_count: int,
