@@ -495,6 +495,18 @@ def sports_games_list(
         conn.close()
 
 
+# Optional manual overrides for NBA games where Gamma does not yet expose a usable mapping.
+# Keyed by sports WebSocket game_id. Values should include at least market_id (conditionId) and asset_id (token_id).
+NBA_MANUAL_GAME_MAP: dict[int, dict[str, Any]] = {
+    # Example (fill in with a real game_id and values if desired):
+    # 20000000: {
+    #     "event_slug": "nba-mil-chi-2026-03-01",
+    #     "market_id": "0xfc849164b1f2b6393bb7bfe14e4ea0212af353f70f74bb4b6f07d69723234ec3",
+    #     "asset_id": "84948451503732547606815660849323938595750376803163338860267905993174231487779",
+    # }
+}
+
+
 def _sports_game_slug_candidates(game: dict[str, Any]) -> list[str]:
     """Build slug candidates for Gamma event lookup. Polymarket uses {league}-{home}-{away}-{YYYY-MM-DD}."""
     candidates = []
@@ -542,55 +554,71 @@ def sports_game_detail(game_id: str):
         start_ts = game.get("first_live_at")
         if start_ts is None and game.get("updated_at"):
             start_ts = int(game["updated_at"]) - 4 * 3600 * 1000
-        markets = []
+        markets: list[Any] = []
 
-        def try_event_slug(s: str) -> list:
-            if not s:
-                return []
-            try:
-                return fetch_markets_from_event_slug(s)
-            except Exception:
-                return []
+        # 1) Manual NBA override, if configured
+        manual = None
+        try:
+            gid = int(game.get("game_id", game_id))
+        except (TypeError, ValueError):
+            gid = None
+        if gid is not None and (game.get("league_abbreviation") or "").strip().lower() == "nba":
+            manual = NBA_MANUAL_GAME_MAP.get(gid)
+        if manual:
+            market_id = manual.get("market_id") or market_id
+            asset_id = manual.get("asset_id") or asset_id
+            # Allow manual start_ts override if provided
+            if manual.get("start_ts") is not None:
+                start_ts = manual["start_ts"]
+        else:
+            # 2) Best-effort automatic mapping via Gamma events/markets
+            def try_event_slug(s: str) -> list:
+                if not s:
+                    return []
+                try:
+                    return fetch_markets_from_event_slug(s)
+                except Exception:
+                    return []
 
-        for slug_candidate in _sports_game_slug_candidates(game):
-            markets = try_event_slug(slug_candidate)
-            if markets:
-                break
-        if not markets:
-            try:
-                markets = fetch_markets_by_game_id(game_id)
-            except Exception:
-                pass
-        game_slug = (game.get("slug") or "").strip().lower()
-        if not markets and game_slug:
-            try:
-                m = fetch_market_by_slug(game_slug)
-                if m:
-                    markets = [m]
-            except Exception:
-                pass
-        if not markets and game_slug:
-            try:
-                markets = fetch_markets_by_slug(game_slug)
-            except Exception:
-                pass
-        if not markets:
-            import structlog
-            structlog.get_logger().info(
-                "sports_game_no_market",
-                game_id=game_id,
-                slug_from_ws=game.get("slug"),
-                candidates=_sports_game_slug_candidates(game),
-            )
-        if markets:
-            m = markets[0]
-            market_id = m.condition_id or m.market_id
-            for o in m.outcomes:
-                if o.name and o.name.strip().lower() == "yes" and o.token_id:
-                    asset_id = o.token_id
+            for slug_candidate in _sports_game_slug_candidates(game):
+                markets = try_event_slug(slug_candidate)
+                if markets:
                     break
-            if not asset_id and m.outcomes:
-                asset_id = m.outcomes[0].token_id
+            if not markets:
+                try:
+                    markets = fetch_markets_by_game_id(game_id)
+                except Exception:
+                    pass
+            game_slug = (game.get("slug") or "").strip().lower()
+            if not markets and game_slug:
+                try:
+                    m = fetch_market_by_slug(game_slug)
+                    if m:
+                        markets = [m]
+                except Exception:
+                    pass
+            if not markets and game_slug:
+                try:
+                    markets = fetch_markets_by_slug(game_slug)
+                except Exception:
+                    pass
+            if not markets:
+                import structlog
+                structlog.get_logger().info(
+                    "sports_game_no_market",
+                    game_id=game_id,
+                    slug_from_ws=game.get("slug"),
+                    candidates=_sports_game_slug_candidates(game),
+                )
+            if markets:
+                m = markets[0]
+                market_id = m.condition_id or m.market_id
+                for o in m.outcomes:
+                    if o.name and o.name.strip().lower() == "yes" and o.token_id:
+                        asset_id = o.token_id
+                        break
+                if not asset_id and m.outcomes:
+                    asset_id = m.outcomes[0].token_id
         slug_candidates = _sports_game_slug_candidates(game)
         event_slug = (game.get("slug") or "").strip().lower() or (slug_candidates[0] if slug_candidates else None)
         league = (game.get("league_abbreviation") or "").strip().lower()
