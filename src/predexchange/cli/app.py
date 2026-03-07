@@ -35,9 +35,10 @@ def main(
 
 
 # Subcommands registered from other modules
-from predexchange.cli import api_cmd, markets, track, log, replay, sim, tui_cmd  # noqa: E402
+from predexchange.cli import api_cmd, kalshi_cmd, markets, track, log, replay, sim, tui_cmd  # noqa: E402
 
 app.add_typer(markets.app, name="markets")
+app.add_typer(kalshi_cmd.app, name="kalshi")
 app.add_typer(track.app, name="track")
 app.add_typer(log.app, name="log")
 app.add_typer(replay.app, name="replay")
