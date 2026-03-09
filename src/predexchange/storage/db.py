@@ -104,6 +104,18 @@ CREATE TABLE IF NOT EXISTS sports_games (
     updated_at          BIGINT NOT NULL,
     first_live_at       BIGINT
 );
+
+-- Event pairing: Polymarket <-> Kalshi (curated "same real-world event")
+CREATE SEQUENCE IF NOT EXISTS pair_seq START 1;
+CREATE TABLE IF NOT EXISTS event_pairs (
+    id                      INTEGER PRIMARY KEY DEFAULT nextval('pair_seq'),
+    polymarket_market_id    VARCHAR NOT NULL,
+    polymarket_asset_id     VARCHAR,
+    kalshi_event_ticker     VARCHAR NOT NULL,
+    kalshi_market_ticker   VARCHAR NOT NULL,
+    label                   VARCHAR,
+    created_at              BIGINT NOT NULL
+);
 """
 
 

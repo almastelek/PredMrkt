@@ -71,3 +71,30 @@ class SimRunDetailResponse(BaseModel):
     realized_pnl: float
     final_inventory: float
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+# --- Event compare (Polymarket <-> Kalshi pairs) ---
+class ComparePairItem(BaseModel):
+    id: int
+    label: str | None = None
+    polymarket_market_id: str
+    polymarket_asset_id: str | None = None
+    kalshi_event_ticker: str
+    kalshi_market_ticker: str
+    polymarket_title: str | None = None
+    kalshi_title: str | None = None
+
+
+class CompareListResponse(BaseModel):
+    pairs: list[ComparePairItem]
+
+
+class CompareDetailResponse(BaseModel):
+    id: int
+    label: str | None = None
+    polymarket_market_id: str
+    polymarket_asset_id: str | None = None
+    kalshi_event_ticker: str
+    kalshi_market_ticker: str
+    polymarket: dict[str, Any] = Field(default_factory=dict, description="Polymarket market metadata if available")
+    kalshi: dict[str, Any] = Field(default_factory=dict, description="Kalshi market metadata from API")

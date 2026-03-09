@@ -21,6 +21,9 @@ from predexchange.api.schemas import (
     MarketAssetResponse,
     MarketListItem,
     MarketsListResponse,
+    CompareDetailResponse,
+    CompareListResponse,
+    ComparePairItem,
     SimRunDetailResponse,
 )
 from predexchange.config import get_settings
@@ -117,6 +120,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="PredExchange API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+from predexexchange.api import compare
+app.include_router(compare.router, prefix="/events", tags=["compare"])
 
 
 def _error_json(code: str, message: str, status_code: int = 404) -> JSONResponse:
