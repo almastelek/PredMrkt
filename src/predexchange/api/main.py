@@ -121,7 +121,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="PredExchange API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-from predexexchange.api import compare
+# Event comparison (Polymarket <-> Kalshi)
+from predexchange.api import compare
+
 app.include_router(compare.router, prefix="/events", tags=["compare"])
 
 

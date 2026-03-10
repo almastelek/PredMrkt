@@ -5,11 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from predexexchange.api.schemas import CompareDetailResponse, CompareListResponse, ComparePairItem
-from predexexchange.config import get_settings
-from predexexchange.ingestion.kalshi.client import KalshiClient
-from predexexchange.storage.db import get_connection
-from predexexchange.storage.event_pairs import get_pair as get_event_pair, list_pairs as list_event_pairs
+from predexchange.api.schemas import CompareDetailResponse, CompareListResponse, ComparePairItem
+from predexchange.config import get_settings
+from predexchange.ingestion.kalshi.client import KalshiClient
+from predexchange.storage.db import get_connection
+from predexchange.storage.event_pairs import get_pair as get_event_pair, list_pairs as list_event_pairs
 
 router = APIRouter()
 
