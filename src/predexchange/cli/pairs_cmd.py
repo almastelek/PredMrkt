@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import typer
 
-from predexexchange.config import get_settings
-from predexexchange.storage.db import get_connection, init_schema
-from predexexchange.storage.event_pairs import add_pair, list_pairs
+from predexchange.config import get_settings
+from predexchange.storage.db import get_connection, init_schema
+from predexchange.storage.event_pairs import add_pair, list_pairs
 
 app = typer.Typer(help="Event pairs: list and add Polymarket <-> Kalshi links")
 

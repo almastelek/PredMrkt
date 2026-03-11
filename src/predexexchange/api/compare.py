@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from predexexchange.api.schemas import CompareDetailResponse, CompareListResponse, ComparePairItem
-from predexexchange.config import get_settings
-from predexexchange.ingestion.kalshi.client import KalshiClient
-from predexexchange.storage.db import get_connection
-from predexexchange.storage.event_pairs import get_pair as get_event_pair, list_pairs as list_event_pairs
+from predexchange.api.schemas import (
+    CompareCandidateItem,
+    CompareCandidatesResponse,
+    CompareDetailResponse,
+    CompareListResponse,
+    ComparePairItem,
+    ApprovePairRequest,
+    RejectCandidateRequest,
+)
+from predexchange.config import get_settings
+from predexchange.ingestion.kalshi.client import KalshiClient
+from predexchange.matching.candidates import suggest_candidates
+from predexchange.storage.candidate_rejections import add_rejection
+from predexchange.storage.db import get_connection, init_schema
+from predexchange.storage.event_pairs import add_pair, get_pair as get_event_pair, list_pairs as list_event_pairs
 
 router = APIRouter()
 
@@ -58,8 +68,7 @@ def events_compare_list() -> CompareListResponse:
         conn.close()
 
 
-@router.get(
-    "/compare/{pair_id}",
+@router.get("/compare/candidates",
     response_model=CompareDetailResponse,
     responses={404: {"description": "Pair not found"}},
 )

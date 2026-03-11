@@ -116,6 +116,14 @@ CREATE TABLE IF NOT EXISTS event_pairs (
     label                   VARCHAR,
     created_at              BIGINT NOT NULL
 );
+
+-- Rejected candidate pairs (admin dismissed; do not resuggest)
+CREATE TABLE IF NOT EXISTS candidate_rejections (
+    polymarket_market_id    VARCHAR NOT NULL,
+    kalshi_market_ticker    VARCHAR NOT NULL,
+    rejected_at             BIGINT NOT NULL,
+    PRIMARY KEY (polymarket_market_id, kalshi_market_ticker)
+);
 """
 
 

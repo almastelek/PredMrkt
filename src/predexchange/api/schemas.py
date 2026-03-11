@@ -98,3 +98,31 @@ class CompareDetailResponse(BaseModel):
     kalshi_market_ticker: str
     polymarket: dict[str, Any] = Field(default_factory=dict, description="Polymarket market metadata if available")
     kalshi: dict[str, Any] = Field(default_factory=dict, description="Kalshi market metadata from API")
+
+
+# --- Event compare candidates (Phase 4: suggested pairs for admin approve/reject) ---
+class CompareCandidateItem(BaseModel):
+    score: float
+    polymarket_market_id: str
+    polymarket_title: str | None = None
+    kalshi_event_ticker: str
+    kalshi_market_ticker: str
+    kalshi_title: str | None = None
+    kalshi_strike_ts: int | None = None
+
+
+class CompareCandidatesResponse(BaseModel):
+    candidates: list[CompareCandidateItem]
+
+
+class ApprovePairRequest(BaseModel):
+    polymarket_market_id: str
+    kalshi_event_ticker: str
+    kalshi_market_ticker: str
+    polymarket_asset_id: str | None = None
+    label: str | None = None
+
+
+class RejectCandidateRequest(BaseModel):
+    polymarket_market_id: str
+    kalshi_market_ticker: str

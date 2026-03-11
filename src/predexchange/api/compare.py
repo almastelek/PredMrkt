@@ -2,22 +2,31 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from predexchange.api.schemas import CompareDetailResponse, CompareListResponse, ComparePairItem
+from predexchange.api.schemas import (
+    CompareCandidateItem,
+    CompareCandidatesResponse,
+    CompareDetailResponse,
+    CompareListResponse,
+    ComparePairItem,
+    ApprovePairRequest,
+    RejectCandidateRequest,
+)
 from predexchange.config import get_settings
 from predexchange.ingestion.kalshi.client import KalshiClient
-from predexchange.storage.db import get_connection
-from predexchange.storage.event_pairs import get_pair as get_event_pair, list_pairs as list_event_pairs
+from predexchange.matching.candidates import suggest_candidates
+from predexchange.storage.candidate_rejections import add_rejection
+from predexchange.storage.db import get_connection, init_schema
+from predexchange.storage.event_pairs import add_pair, get_pair as get_event_pair, list_pairs as list_event_pairs
 
 router = APIRouter()
 
 
-def _get_conn():
+def _get_conn(read_only: bool = True):
     settings = get_settings()
-    conn = get_connection(settings.db_path, read_only=True)
-    return conn
+    return get_connection(settings.db_path, read_only=read_only)
 
 
 def _polymarket_title(conn, market_id: str) -> str | None:
@@ -28,7 +37,7 @@ def _polymarket_title(conn, market_id: str) -> str | None:
 @router.get("/compare", response_model=CompareListResponse)
 def events_compare_list() -> CompareListResponse:
     """List all curated event pairs (Polymarket <-> Kalshi). Enriched with titles from DB and Kalshi API."""
-    conn = _get_conn()
+    conn = _get_conn(read_only=True)
     try:
         pairs = list_event_pairs(conn)
         kalshi = KalshiClient()
@@ -58,6 +67,71 @@ def events_compare_list() -> CompareListResponse:
         conn.close()
 
 
+@router.get("/compare/candidates", response_model=CompareCandidatesResponse)
+def events_compare_candidates(
+    limit: int = Query(30, ge=1, le=100, description="Max candidate pairs to return"),
+    min_score: float = Query(0.4, ge=0.0, le=1.0, description="Minimum title similarity score"),
+) -> CompareCandidatesResponse:
+    """Suggest candidate Polymarket <-> Kalshi pairs by title similarity for admin approval."""
+    conn = _get_conn(read_only=True)
+    try:
+        raw = suggest_candidates(conn, limit=limit, min_score=min_score)
+        items = [
+            CompareCandidateItem(
+                score=c["score"],
+                polymarket_market_id=c["polymarket_market_id"],
+                polymarket_title=c.get("polymarket_title"),
+                kalshi_event_ticker=c["kalshi_event_ticker"],
+                kalshi_market_ticker=c["kalshi_market_ticker"],
+                kalshi_title=c.get("kalshi_title"),
+                kalshi_strike_ts=c.get("kalshi_strike_ts"),
+            )
+            for c in raw
+        ]
+        return CompareCandidatesResponse(candidates=items)
+    finally:
+        conn.close()
+
+
+@router.post("/compare/approve")
+def events_compare_approve(body: ApprovePairRequest) -> dict:
+    """Approve a candidate pair: insert into event_pairs. Returns new pair id."""
+    conn = _get_conn(read_only=False)
+    try:
+        init_schema(conn)
+        pair_id = add_pair(
+            conn,
+            polymarket_market_id=body.polymarket_market_id.strip(),
+            kalshi_event_ticker=body.kalshi_event_ticker.strip(),
+            kalshi_market_ticker=body.kalshi_market_ticker.strip(),
+            polymarket_asset_id=body.polymarket_asset_id.strip() if body.polymarket_asset_id else None,
+            label=body.label.strip() if body.label else None,
+        )
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        return {"id": pair_id}
+    finally:
+        conn.close()
+
+
+@router.post("/compare/candidates/reject")
+def events_compare_reject(body: RejectCandidateRequest) -> dict:
+    """Reject a candidate pair so it is not suggested again."""
+    conn = _get_conn(read_only=False)
+    try:
+        init_schema(conn)
+        add_rejection(conn, body.polymarket_market_id.strip(), body.kalshi_market_ticker.strip())
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
 @router.get(
     "/compare/{pair_id}",
     response_model=CompareDetailResponse,
@@ -65,7 +139,7 @@ def events_compare_list() -> CompareListResponse:
 )
 def events_compare_detail(pair_id: int) -> CompareDetailResponse | JSONResponse:
     """Get one event pair with full Polymarket and Kalshi metadata."""
-    conn = _get_conn()
+    conn = _get_conn(read_only=True)
     try:
         p = get_event_pair(conn, pair_id)
         if not p:

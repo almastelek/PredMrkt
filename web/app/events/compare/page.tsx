@@ -69,6 +69,11 @@ export default function EventsComparePage() {
       <p style={{ color: '#888', fontSize: 14, marginBottom: 16 }}>
         Curated pairs of identical real-world events, with links to a side-by-side comparison view.
       </p>
+      <p style={{ marginBottom: 16 }}>
+        <a href="/events/compare/candidates" style={{ color: '#9cf', fontSize: 14 }}>
+          Suggest new pairs (admin)
+        </a>
+      </p>
       {loading && <p>Loading pairs…</p>}
       {error && !loading && (
         <div style={{ background: '#3a2020', border: '1px solid #a44', padding: 12, marginBottom: 16, borderRadius: 4 }}>
