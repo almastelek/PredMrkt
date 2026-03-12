@@ -24,9 +24,17 @@ from predexchange.storage.event_pairs import add_pair, get_pair as get_event_pai
 router = APIRouter()
 
 
-def _get_conn(read_only: bool = True):
+def _get_conn():
+    """
+    Return a DuckDB connection for compare endpoints.
+
+    Use read_only=False to match the configuration used when the API
+    is started with --with-ingestion (single-process writer), otherwise
+    DuckDB will reject mixed read_only / read_write connections to the
+    same file.
+    """
     settings = get_settings()
-    return get_connection(settings.db_path, read_only=read_only)
+    return get_connection(settings.db_path, read_only=False)
 
 
 def _polymarket_title(conn, market_id: str) -> str | None:
@@ -37,7 +45,7 @@ def _polymarket_title(conn, market_id: str) -> str | None:
 @router.get("/compare", response_model=CompareListResponse)
 def events_compare_list() -> CompareListResponse:
     """List all curated event pairs (Polymarket <-> Kalshi). Enriched with titles from DB and Kalshi API."""
-    conn = _get_conn(read_only=True)
+    conn = _get_conn()
     try:
         pairs = list_event_pairs(conn)
         kalshi = KalshiClient()
@@ -73,7 +81,7 @@ def events_compare_candidates(
     min_score: float = Query(0.4, ge=0.0, le=1.0, description="Minimum title similarity score"),
 ) -> CompareCandidatesResponse:
     """Suggest candidate Polymarket <-> Kalshi pairs by title similarity for admin approval."""
-    conn = _get_conn(read_only=True)
+    conn = _get_conn()
     try:
         raw = suggest_candidates(conn, limit=limit, min_score=min_score)
         items = [
@@ -96,7 +104,7 @@ def events_compare_candidates(
 @router.post("/compare/approve")
 def events_compare_approve(body: ApprovePairRequest) -> dict:
     """Approve a candidate pair: insert into event_pairs. Returns new pair id."""
-    conn = _get_conn(read_only=False)
+    conn = _get_conn()
     try:
         init_schema(conn)
         pair_id = add_pair(
@@ -119,7 +127,7 @@ def events_compare_approve(body: ApprovePairRequest) -> dict:
 @router.post("/compare/candidates/reject")
 def events_compare_reject(body: RejectCandidateRequest) -> dict:
     """Reject a candidate pair so it is not suggested again."""
-    conn = _get_conn(read_only=False)
+    conn = _get_conn()
     try:
         init_schema(conn)
         add_rejection(conn, body.polymarket_market_id.strip(), body.kalshi_market_ticker.strip())
@@ -139,7 +147,7 @@ def events_compare_reject(body: RejectCandidateRequest) -> dict:
 )
 def events_compare_detail(pair_id: int) -> CompareDetailResponse | JSONResponse:
     """Get one event pair with full Polymarket and Kalshi metadata."""
-    conn = _get_conn(read_only=True)
+    conn = _get_conn()
     try:
         p = get_event_pair(conn, pair_id)
         if not p:
