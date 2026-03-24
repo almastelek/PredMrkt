@@ -18,10 +18,42 @@ log = structlog.get_logger(__name__)
 # Common words to drop when comparing titles (reduces noise)
 _STOPWORDS = frozenset(
     {
-        "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-        "of", "by", "with", "will", "be", "is", "are", "was", "were", "been",
-        "have", "has", "had", "do", "does", "did", "this", "that", "these",
-        "those", "it", "its", "?", "yes", "no",
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "by",
+        "with",
+        "will",
+        "be",
+        "is",
+        "are",
+        "was",
+        "were",
+        "been",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "?",
+        "yes",
+        "no",
     }
 )
 
@@ -81,12 +113,25 @@ def _parse_kalshi_date(ev: dict[str, Any]) -> int | None:
     return None
 
 
+def _safe_float(v: Any) -> float:
+    """Best-effort float conversion; returns 0.0 on failure/None."""
+    try:
+        if v is None:
+            return 0.0
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def suggest_candidates(
     conn: Any,
     limit: int = 50,
     min_score: float = 0.4,
     polymarket_limit: int = 500,
     kalshi_event_limit: int = 200,
+    min_common_tokens: int = 2,
+    min_polymarket_volume_24h: float = 0.0,
+    min_polymarket_liquidity: float = 0.0,
 ) -> list[dict[str, Any]]:
     """
     Suggest candidate (Polymarket, Kalshi) pairs by title (+ optional date) similarity.
@@ -99,12 +144,19 @@ def suggest_candidates(
     approved_set = {(p["polymarket_market_id"], p["kalshi_market_ticker"]) for p in approved}
     rejected_set = get_rejected_set(conn)
 
-    # Polymarket: from DB (venue=polymarket, has title)
+    # Polymarket: from DB (venue=polymarket, has title, active, and above volume/liquidity thresholds)
     all_markets = list_markets(conn, tracked_only=False)
     pm_markets = [
-        {"market_id": m["market_id"], "title": (m.get("title") or "").strip() or m["market_id"]}
+        {
+            "market_id": m["market_id"],
+            "title": (m.get("title") or "").strip() or m["market_id"],
+        }
         for m in all_markets
-        if (m.get("venue") or "polymarket").lower() == "polymarket" and (m.get("title") or "").strip()
+        if (m.get("venue") or "polymarket").lower() == "polymarket"
+        and (m.get("title") or "").strip()
+        and bool(m.get("active", True))
+        and _safe_float(m.get("volume_24h")) >= min_polymarket_volume_24h
+        and _safe_float(m.get("liquidity")) >= min_polymarket_liquidity
     ]
     pm_markets = pm_markets[:polymarket_limit]
 
@@ -121,28 +173,42 @@ def suggest_candidates(
             event_ticker = ev.get("event_ticker") or ev.get("ticker") or ""
             title = (ev.get("title") or ev.get("subtitle") or "").strip() or event_ticker
             markets = ev.get("markets") or []
+            event_strike_ts = _parse_kalshi_date(ev)
             if not markets:
-                # Single-market event might have ticker on event
+                # Single-market event might have ticker on event; treat that as canonical.
                 ticker = ev.get("ticker") or event_ticker
                 if ticker:
-                    kalshi_events.append({
-                        "event_ticker": event_ticker,
-                        "market_ticker": ticker,
-                        "title": title,
-                        "strike_ts": _parse_kalshi_date(ev),
-                    })
+                    kalshi_events.append(
+                        {
+                            "event_ticker": event_ticker,
+                            "market_ticker": ticker,
+                            "title": title,
+                            "strike_ts": event_strike_ts,
+                        }
+                    )
                 continue
+            # Choose one canonical market per event (e.g. most liquid / closest to event title)
+            best: dict[str, Any] | None = None
+            best_liq = -1.0
+            best_sim = -1.0
             for m in markets:
                 mt = (m.get("ticker") or m.get("market_ticker") or "").strip()
                 if not mt:
                     continue
                 mt_title = (m.get("title") or m.get("subtitle") or "").strip() or title
-                kalshi_events.append({
-                    "event_ticker": event_ticker,
-                    "market_ticker": mt,
-                    "title": mt_title,
-                    "strike_ts": _parse_kalshi_date(ev) or _parse_kalshi_date(m),
-                })
+                liq = _safe_float(m.get("liquidity_dollars") or m.get("liquidity"))
+                sim = _title_similarity(mt_title, title)
+                if liq > best_liq or (liq == best_liq and sim > best_sim):
+                    best_liq = liq
+                    best_sim = sim
+                    best = {
+                        "event_ticker": event_ticker,
+                        "market_ticker": mt,
+                        "title": mt_title,
+                        "strike_ts": event_strike_ts or _parse_kalshi_date(m),
+                    }
+            if best is not None:
+                kalshi_events.append(best)
     except Exception as e:
         log.warning("kalshi_events_fetch_failed", error=str(e))
         return []
@@ -154,17 +220,23 @@ def suggest_candidates(
             if key in approved_set or key in rejected_set:
                 continue
             score = _title_similarity(pm["title"], k["title"])
+            if min_common_tokens > 0:
+                common = _token_set(pm["title"]) & _token_set(k["title"])
+                if len(common) < min_common_tokens:
+                    continue
             if score < min_score:
                 continue
-            candidates.append({
-                "score": round(score, 3),
-                "polymarket_market_id": pm["market_id"],
-                "polymarket_title": pm["title"],
-                "kalshi_event_ticker": k["event_ticker"],
-                "kalshi_market_ticker": k["market_ticker"],
-                "kalshi_title": k["title"],
-                "kalshi_strike_ts": k.get("strike_ts"),
-            })
+            candidates.append(
+                {
+                    "score": round(score, 3),
+                    "polymarket_market_id": pm["market_id"],
+                    "polymarket_title": pm["title"],
+                    "kalshi_event_ticker": k["event_ticker"],
+                    "kalshi_market_ticker": k["market_ticker"],
+                    "kalshi_title": k["title"],
+                    "kalshi_strike_ts": k.get("strike_ts"),
+                }
+            )
 
     candidates.sort(key=lambda x: -x["score"])
     return candidates[:limit]

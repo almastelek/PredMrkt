@@ -143,6 +143,22 @@ class Settings:
         )
 
     @property
+    def data_api_base(self) -> str:
+        return self.polymarket.get("data_api_base", "https://data-api.polymarket.com")
+
+    @property
+    def whale_min_cash_filter(self) -> float:
+        return float(self.polymarket.get("whale_min_cash_filter", 10000))
+
+    @property
+    def whale_ingest_page_limit(self) -> int:
+        return int(self.polymarket.get("whale_ingest_page_limit", 1000))
+
+    @property
+    def whale_ingest_max_pages(self) -> int:
+        return int(self.polymarket.get("whale_ingest_max_pages", 20))
+
+    @property
     def logging_level(self) -> str:
         return self.logging.get("level", "INFO").upper()
 

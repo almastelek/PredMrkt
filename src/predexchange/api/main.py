@@ -125,6 +125,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 from predexchange.api import compare
 
 app.include_router(compare.router, prefix="/events", tags=["compare"])
+from predexchange.api import whales
+
+app.include_router(whales.router, tags=["whales"])
 
 
 def _error_json(code: str, message: str, status_code: int = 404) -> JSONResponse:

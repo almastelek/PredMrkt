@@ -34,6 +34,10 @@ min_liquidity = 0
 [polymarket]
 gamma_api_base = "https://gamma-api.polymarket.com"
 clob_ws_url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+data_api_base = "https://data-api.polymarket.com"
+whale_min_cash_filter = 10000
+whale_ingest_page_limit = 1000
+whale_ingest_max_pages = 20
 
 [logging]
 level = "INFO"

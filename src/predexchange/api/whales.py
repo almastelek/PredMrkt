@@ -1,0 +1,139 @@
+"""Whale/insider API routes backed by Data API ingest + DuckDB analytics."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Query
+from pydantic import BaseModel
+
+from predexchange.config import get_settings
+from predexchange.ingestion.polymarket.data_api import PolymarketDataApiClient
+from predexchange.storage.db import get_connection, init_schema
+from predexchange.storage.whales import (
+    list_large_trades,
+    list_tracked_wallets,
+    track_wallet,
+    untrack_wallet,
+    wallet_aggregates,
+)
+
+router = APIRouter()
+
+
+class TrackWalletBody(BaseModel):
+    address: str
+    label: str | None = None
+    notes: str | None = None
+
+
+def _get_conn():
+    settings = get_settings()
+    return get_connection(settings.db_path, read_only=False)
+
+
+@router.get("/whales/trades")
+def whales_trades(
+    limit: int = Query(100, ge=1, le=500),
+    min_notional: float | None = Query(None, ge=0),
+) -> dict[str, Any]:
+    settings = get_settings()
+    threshold = float(min_notional if min_notional is not None else settings.whale_min_cash_filter)
+    conn = _get_conn()
+    try:
+        init_schema(conn)
+        return {"trades": list_large_trades(conn, min_notional=threshold, limit=limit)}
+    finally:
+        conn.close()
+
+
+@router.get("/whales/wallets")
+def whales_wallets(
+    limit: int = Query(100, ge=1, le=500),
+    min_notional: float | None = Query(None, ge=0),
+) -> dict[str, Any]:
+    settings = get_settings()
+    threshold = float(min_notional if min_notional is not None else settings.whale_min_cash_filter)
+    conn = _get_conn()
+    try:
+        init_schema(conn)
+        wallets = wallet_aggregates(conn, min_notional=threshold, limit=limit)
+        tracked = {w["address"] for w in list_tracked_wallets(conn)}
+        for w in wallets:
+            w["is_tracked"] = w["wallet"] in tracked
+        return {"wallets": wallets}
+    finally:
+        conn.close()
+
+
+@router.get("/whales/tracked")
+def whales_tracked() -> dict[str, Any]:
+    conn = _get_conn()
+    try:
+        init_schema(conn)
+        return {"wallets": list_tracked_wallets(conn)}
+    finally:
+        conn.close()
+
+
+@router.post("/whales/track")
+def whales_track(body: TrackWalletBody) -> dict[str, Any]:
+    conn = _get_conn()
+    try:
+        init_schema(conn)
+        track_wallet(conn, body.address, label=body.label, notes=body.notes)
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@router.delete("/whales/track/{address}")
+def whales_untrack(address: str) -> dict[str, Any]:
+    conn = _get_conn()
+    try:
+        init_schema(conn)
+        untrack_wallet(conn, address)
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@router.get("/whales/wallets/{address}")
+def whales_wallet_detail(address: str, live: bool = Query(True)) -> dict[str, Any]:
+    conn = _get_conn()
+    try:
+        init_schema(conn)
+        items = wallet_aggregates(conn, min_notional=0, limit=100000)
+        summary = next((w for w in items if w["wallet"] == address.lower()), None)
+        tracked = next((w for w in list_tracked_wallets(conn) if w["address"] == address.lower()), None)
+    finally:
+        conn.close()
+
+    out: dict[str, Any] = {
+        "wallet": address.lower(),
+        "summary": summary,
+        "tracked": tracked,
+    }
+    if live:
+        settings = get_settings()
+        client = PolymarketDataApiClient(base_url=settings.data_api_base)
+        try:
+            out["positions"] = client.get_positions(address)
+        except Exception:
+            out["positions"] = None
+        try:
+            out["closed_positions"] = client.get_closed_positions(address)
+        except Exception:
+            out["closed_positions"] = None
+        try:
+            out["activity"] = client.get_activity(address)
+        except Exception:
+            out["activity"] = None
+        try:
+            out["value"] = client.get_value(address)
+        except Exception:
+            out["value"] = None
+    return out
+

@@ -124,6 +124,38 @@ CREATE TABLE IF NOT EXISTS candidate_rejections (
     rejected_at             BIGINT NOT NULL,
     PRIMARY KEY (polymarket_market_id, kalshi_market_ticker)
 );
+
+-- Data API trades (for whale / large-flow analytics)
+CREATE TABLE IF NOT EXISTS data_api_trades (
+    id                  BIGINT PRIMARY KEY DEFAULT nextval('event_seq'),
+    proxy_wallet        VARCHAR NOT NULL,
+    side                VARCHAR,
+    asset               VARCHAR,
+    condition_id        VARCHAR,
+    size                DOUBLE,
+    price               DOUBLE,
+    notional_usdc       DOUBLE,
+    timestamp_ms        BIGINT NOT NULL,
+    title               VARCHAR,
+    slug                VARCHAR,
+    event_slug          VARCHAR,
+    outcome             VARCHAR,
+    transaction_hash    VARCHAR,
+    ingested_at_ms      BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tracked_wallets (
+    address         VARCHAR PRIMARY KEY,
+    label           VARCHAR,
+    notes           VARCHAR,
+    created_at_ms   BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ingestion_cursors (
+    name            VARCHAR PRIMARY KEY,
+    cursor_value    VARCHAR,
+    updated_at_ms   BIGINT NOT NULL
+);
 """
 
 
