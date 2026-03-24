@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 
 const API = process.env.NEXT_PUBLIC_API || 'http://127.0.0.1:8000';
+const moneyFmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+const intFmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 
 type WhaleWallet = {
   wallet: string;
@@ -81,10 +83,10 @@ export default function WhalesPage() {
                 <a href={`/whales/${w.wallet}`} style={{ color: '#9cf' }}>{w.wallet}</a>
                 {w.is_tracked ? <span style={{ color: '#7d7', marginLeft: 8 }}>(tracked)</span> : null}
               </td>
-              <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>${w.spend_1d.toFixed(0)}</td>
-              <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>${w.spend_7d.toFixed(0)}</td>
-              <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>${w.spend_30d.toFixed(0)}</td>
-              <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>{w.active_days}</td>
+              <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>${moneyFmt.format(w.spend_1d || 0)}</td>
+              <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>${moneyFmt.format(w.spend_7d || 0)}</td>
+              <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>${moneyFmt.format(w.spend_30d || 0)}</td>
+              <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>{intFmt.format(w.active_days || 0)}</td>
               <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>{(w.top_market_concentration_30d * 100).toFixed(0)}%</td>
             </tr>
           ))}
@@ -111,7 +113,7 @@ export default function WhalesPage() {
               </td>
               <td style={{ borderBottom: '1px solid #222', padding: 8 }}>{t.title || '-'}</td>
               <td style={{ borderBottom: '1px solid #222', padding: 8 }}>{t.side || '-'} {t.outcome ? `(${t.outcome})` : ''}</td>
-              <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>${t.notional_usdc.toFixed(0)}</td>
+              <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>${moneyFmt.format(t.notional_usdc || 0)}</td>
             </tr>
           ))}
         </tbody>
