@@ -53,11 +53,33 @@ class PolymarketDataApiClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        with httpx.Client(timeout=self.timeout) as client:
-            r = client.get(f"{self.base_url}{path}", params=params)
-            r.raise_for_status()
-            return r.json()
+    def _get(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        retries: int = 3,
+        retry_backoff_sec: float = 1.0,
+    ) -> Any:
+        attempt = 0
+        while True:
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    r = client.get(f"{self.base_url}{path}", params=params)
+                    # Retry transient gateway/timeouts/rate limit responses.
+                    if r.status_code in (408, 429, 500, 502, 503, 504) and attempt < retries:
+                        sleep_for = retry_backoff_sec * (2**attempt)
+                        time.sleep(sleep_for)
+                        attempt += 1
+                        continue
+                    r.raise_for_status()
+                    return r.json()
+            except (httpx.TimeoutException, httpx.NetworkError):
+                if attempt >= retries:
+                    raise
+                sleep_for = retry_backoff_sec * (2**attempt)
+                time.sleep(sleep_for)
+                attempt += 1
 
     def get_trades(
         self,
