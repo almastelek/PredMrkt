@@ -56,7 +56,7 @@ export default function Home() {
       .then((r) => r.json())
       .then(setStats)
       .catch(() => setStats(null));
-    fetch(`${API}/events/by_market?limit=${DEFAULT_LIMIT}&sparkline_buckets=12`)
+    fetch(`${API}/events/by_market?limit=${DEFAULT_LIMIT}&sparkline_buckets=12&window_minutes=60&active_only=true`)
       .then((r) => r.json())
       .then(setTopEvents)
       .catch(() => setTopEvents([]));

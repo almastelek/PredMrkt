@@ -18,11 +18,23 @@ def api(
     with_sports: bool = typer.Option(
         False, "--with-sports", help="Run only Sports WebSocket (live scores). Implied by --with-ingestion.",
     ),
+    refresh_tracked: bool = typer.Option(
+        False,
+        "--refresh-tracked",
+        help="On startup (with --with-ingestion), refresh tracked markets via Gamma selector (like 'predex markets discover')",
+    ),
     profile: str | None = typer.Option(None, "--profile", help="Config profile (e.g. dev)"),
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
-    run_api(host=host, port=port, with_ingestion=with_ingestion, with_sports=with_sports, profile=profile)
+    run_api(
+        host=host,
+        port=port,
+        with_ingestion=with_ingestion,
+        with_sports=with_sports,
+        profile=profile,
+        refresh_tracked=refresh_tracked,
+    )
 
 
 if __name__ == "__main__":

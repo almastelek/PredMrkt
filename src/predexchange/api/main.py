@@ -26,6 +26,8 @@ from predexchange.api.schemas import (
     ComparePairItem,
     SimRunDetailResponse,
 )
+from predexchange.api import runtime
+from predexchange.api.db import get_api_connection
 from predexchange.config import get_settings
 from predexchange.replay.engine import (
     replay_to_book_snapshots,
@@ -43,28 +45,46 @@ from predexchange.ingestion.polymarket.gamma import (
 )
 from predexchange.storage.sports import get_sports_game, list_sports_games
 from predexchange.simulation.runner import get_run_result
-
-# Set by run_api() so lifespan can start ingestion/sports in the same process.
-_run_with_ingestion = False
-_run_with_sports = False
-_config_profile: str | None = None
-
+from predexchange.ingestion.polymarket.gamma import fetch_markets, select_top_markets
+from predexchange.storage.markets import set_tracked_markets, upsert_markets
 
 def _get_conn():
-    settings = get_settings(_config_profile)
-    # With ingestion in-process, DuckDB requires same config for all connections to the same file; use read_only=False to match ingestion.
-    read_only = not (_run_with_ingestion or _run_with_sports)
-    conn = get_connection(settings.db_path, read_only=read_only)
-    return conn
+    return get_api_connection()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure schema (including last_mid) exists
-    settings = get_settings(_config_profile)
+    settings = get_settings(runtime.config_profile)
     conn = get_connection(settings.db_path, read_only=False)
     try:
         init_schema(conn)
+        # Optional metadata refresh on startup so UI titles/categories/liquidity stay fresh.
+        # When running with in-process ingestion, this happens before we compute tracked asset_ids.
+        if runtime.run_with_ingestion and runtime.refresh_markets_metadata_on_start:
+            try:
+                markets = fetch_markets(
+                    base_url=settings.gamma_api_base,
+                    limit=500,
+                    active_only=True,
+                )
+                upsert_markets(conn, markets)
+                if runtime.refresh_tracked_on_start:
+                    selected = select_top_markets(
+                        markets,
+                        track_count=settings.track_count,
+                        active_only=True,
+                        min_volume_24h=settings.min_volume_24h,
+                        min_liquidity=settings.min_liquidity,
+                        category_allowlist=settings.category_allowlist or None,
+                        category_denylist=settings.category_denylist or None,
+                        pinned_market_ids=settings.pinned_markets or None,
+                    )
+                    set_tracked_markets(conn, [m.market_id for m in selected], venue="polymarket")
+                conn.commit()
+            except Exception:
+                # Startup should not fail if Gamma is temporarily unavailable.
+                pass
     finally:
         conn.close()
 
@@ -72,8 +92,8 @@ async def lifespan(app: FastAPI):
     ingestion_stop = None
     ingestion_manager = None
 
-    if _run_with_ingestion:
-        settings = get_settings(_config_profile)
+    if runtime.run_with_ingestion:
+        settings = get_settings(runtime.config_profile)
         from predexchange.ingestion.manager import IngestionManager
 
         ingestion_manager = IngestionManager(
@@ -89,11 +109,11 @@ async def lifespan(app: FastAPI):
 
     sports_task = None
     sports_stop = None
-    if _run_with_sports:
+    if runtime.run_with_sports:
         from predexchange.ingestion.polymarket.sports_ws import run_sports_ws
         from predexchange.storage.sports import upsert_sport_result
 
-        settings = get_settings(_config_profile)
+        settings = get_settings(runtime.config_profile)
         db_path = settings.db_path
 
         def _on_sport_result(payload: dict[str, Any], ingest_ts: int) -> None:
@@ -411,10 +431,14 @@ def events_by_market(
     limit: int = Query(40, ge=1, le=100),
     sparkline_buckets: int = Query(12, ge=0, le=48),
     category: str | None = Query(None, description="Filter by market category (e.g. Politics, Sports)"),
+    window_minutes: int = Query(60, ge=1, le=24 * 60, description="Rank by event count in last N minutes"),
+    active_only: bool = Query(True, description="Only include markets where markets.active=true (when metadata exists)"),
 ) -> list[EventByMarketItem]:
     """Event counts per event (condition). Joins markets for title/category. Optional category filter and sparkline."""
     conn = _get_conn()
     try:
+        now_ms = int(time.time() * 1000)
+        window_start_ms = now_ms - window_minutes * 60 * 1000
         # Fetch more when filtering by category so we have enough after filter
         fetch_limit = limit * 3 if category else limit
         rows = conn.execute(
@@ -422,21 +446,23 @@ def events_by_market(
             WITH counts AS (
                 SELECT market_id, COUNT(*) AS cnt
                 FROM raw_events
+                WHERE ingest_ts >= ?
                 GROUP BY market_id
                 ORDER BY cnt DESC
                 LIMIT ?
             ),
             joined AS (
-                SELECT c.market_id, c.cnt, m.title, m.category
+                SELECT c.market_id, c.cnt, m.title, m.category, m.active
                 FROM counts c
                 LEFT JOIN markets m ON
                     LOWER(REPLACE(TRIM(m.market_id), '0x', '')) = LOWER(REPLACE(TRIM(c.market_id), '0x', ''))
             )
             SELECT market_id, cnt, title, category FROM joined
             WHERE (? IS NULL OR TRIM(COALESCE(category, '')) = ?)
+              AND (? = false OR COALESCE(active, true) = true)
             LIMIT ?
             """,
-            [fetch_limit, category, (category or "").strip(), limit],
+            [window_start_ms, fetch_limit, category, (category or "").strip(), active_only, limit],
         ).fetchall()
         out = [
             {
@@ -676,11 +702,12 @@ def run_api(
     port: int = 8000,
     with_ingestion: bool = False,
     with_sports: bool = False,
+    refresh_tracked: bool = False,
     profile: str | None = None,
 ) -> None:
-    global _run_with_ingestion, _run_with_sports, _config_profile
-    _run_with_ingestion = with_ingestion
-    _run_with_sports = with_sports or with_ingestion
-    _config_profile = profile
+    runtime.run_with_ingestion = with_ingestion
+    runtime.run_with_sports = with_sports or with_ingestion
+    runtime.config_profile = profile
+    runtime.refresh_tracked_on_start = bool(refresh_tracked)
     import uvicorn
     uvicorn.run("predexchange.api.main:app", host=host, port=port, reload=False)

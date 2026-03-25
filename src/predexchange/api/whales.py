@@ -7,9 +7,11 @@ from typing import Any
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from predexchange.api import runtime
+from predexchange.api.db import get_api_connection
 from predexchange.config import get_settings
 from predexchange.ingestion.polymarket.data_api import PolymarketDataApiClient
-from predexchange.storage.db import get_connection, init_schema
+from predexchange.storage.db import init_schema
 from predexchange.storage.whales import (
     list_large_trades,
     list_tracked_wallets,
@@ -28,8 +30,7 @@ class TrackWalletBody(BaseModel):
 
 
 def _get_conn():
-    settings = get_settings()
-    return get_connection(settings.db_path, read_only=False)
+    return get_api_connection()
 
 
 @router.get("/whales/trades")
@@ -37,7 +38,7 @@ def whales_trades(
     limit: int = Query(100, ge=1, le=500),
     min_notional: float | None = Query(None, ge=0),
 ) -> dict[str, Any]:
-    settings = get_settings()
+    settings = get_settings(runtime.config_profile)
     threshold = float(min_notional if min_notional is not None else settings.whale_min_cash_filter)
     conn = _get_conn()
     try:
@@ -52,7 +53,7 @@ def whales_wallets(
     limit: int = Query(100, ge=1, le=500),
     min_notional: float | None = Query(None, ge=0),
 ) -> dict[str, Any]:
-    settings = get_settings()
+    settings = get_settings(runtime.config_profile)
     threshold = float(min_notional if min_notional is not None else settings.whale_min_cash_filter)
     conn = _get_conn()
     try:
@@ -117,7 +118,7 @@ def whales_wallet_detail(address: str, live: bool = Query(True)) -> dict[str, An
         "tracked": tracked,
     }
     if live:
-        settings = get_settings()
+        settings = get_settings(runtime.config_profile)
         client = PolymarketDataApiClient(base_url=settings.data_api_base)
         try:
             out["positions"] = client.get_positions(address)

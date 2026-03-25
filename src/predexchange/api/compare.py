@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
+from predexchange.api.db import get_api_connection
+from predexchange.api import runtime
 from predexchange.api.schemas import (
     CompareCandidateItem,
     CompareCandidatesResponse,
@@ -14,27 +16,17 @@ from predexchange.api.schemas import (
     ApprovePairRequest,
     RejectCandidateRequest,
 )
-from predexchange.config import get_settings
 from predexchange.ingestion.kalshi.client import KalshiClient
 from predexchange.matching.candidates import suggest_candidates
 from predexchange.storage.candidate_rejections import add_rejection
-from predexchange.storage.db import get_connection, init_schema
+from predexchange.storage.db import init_schema
 from predexchange.storage.event_pairs import add_pair, get_pair as get_event_pair, list_pairs as list_event_pairs
 
 router = APIRouter()
 
 
 def _get_conn():
-    """
-    Return a DuckDB connection for compare endpoints.
-
-    Use read_only=False to match the configuration used when the API
-    is started with --with-ingestion (single-process writer), otherwise
-    DuckDB will reject mixed read_only / read_write connections to the
-    same file.
-    """
-    settings = get_settings()
-    return get_connection(settings.db_path, read_only=False)
+    return get_api_connection()
 
 
 def _polymarket_title(conn, market_id: str) -> str | None:
