@@ -13,6 +13,8 @@ type WhaleWallet = {
   spend_30d: number;
   active_days: number;
   top_market_concentration_30d: number;
+  first_seen_ms?: number | null;
+  last_seen_ms?: number | null;
   is_tracked?: boolean;
 };
 
@@ -74,6 +76,8 @@ export default function WhalesPage() {
             <th style={{ textAlign: 'right', borderBottom: '1px solid #333', padding: 8 }}>30d</th>
             <th style={{ textAlign: 'right', borderBottom: '1px solid #333', padding: 8 }}>Active days</th>
             <th style={{ textAlign: 'right', borderBottom: '1px solid #333', padding: 8 }}>Top market %</th>
+            <th style={{ textAlign: 'left', borderBottom: '1px solid #333', padding: 8 }}>First trade</th>
+            <th style={{ textAlign: 'left', borderBottom: '1px solid #333', padding: 8 }}>Latest trade</th>
           </tr>
         </thead>
         <tbody>
@@ -88,6 +92,12 @@ export default function WhalesPage() {
               <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>${moneyFmt.format(w.spend_30d || 0)}</td>
               <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>{intFmt.format(w.active_days || 0)}</td>
               <td style={{ textAlign: 'right', borderBottom: '1px solid #222', padding: 8 }}>{(w.top_market_concentration_30d * 100).toFixed(0)}%</td>
+              <td style={{ borderBottom: '1px solid #222', padding: 8 }}>
+                {w.first_seen_ms ? new Date(w.first_seen_ms).toLocaleString() : '-'}
+              </td>
+              <td style={{ borderBottom: '1px solid #222', padding: 8 }}>
+                {w.last_seen_ms ? new Date(w.last_seen_ms).toLocaleString() : '-'}
+              </td>
             </tr>
           ))}
         </tbody>
