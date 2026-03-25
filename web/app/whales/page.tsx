@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { getJSON } from '../../lib/api';
 
 const API = process.env.NEXT_PUBLIC_API || 'http://127.0.0.1:8000';
 const moneyFmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
@@ -37,8 +38,8 @@ export default function WhalesPage() {
     let cancelled = false;
     setLoading(true);
     Promise.all([
-      fetch(`${API}/whales/wallets?limit=50`).then((r) => r.json()),
-      fetch(`${API}/whales/trades?limit=50`).then((r) => r.json()),
+      getJSON<any>(`/whales/wallets?limit=50`),
+      getJSON<any>(`/whales/trades?limit=50`),
     ])
       .then(([w, t]) => {
         if (cancelled) return;

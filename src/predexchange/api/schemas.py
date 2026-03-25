@@ -126,3 +126,69 @@ class ApprovePairRequest(BaseModel):
 class RejectCandidateRequest(BaseModel):
     polymarket_market_id: str
     kalshi_market_ticker: str
+
+
+# --- Whales / wallets ---
+class WhaleTrade(BaseModel):
+    wallet: str
+    side: str | None = None
+    condition_id: str | None = None
+    title: str | None = None
+    outcome: str | None = None
+    size: float | None = None
+    price: float | None = None
+    notional_usdc: float | None = None
+    timestamp_ms: int
+    transaction_hash: str | None = None
+
+
+class WhaleTradesResponse(BaseModel):
+    trades: list[WhaleTrade]
+
+
+class WhaleWalletAgg(BaseModel):
+    wallet: str
+    spend_1d: float
+    spend_7d: float
+    spend_30d: float
+    first_seen_ms: int | None = None
+    last_seen_ms: int | None = None
+    active_days: int
+    top_market_notional_30d: float
+    top_market_concentration_30d: float
+    is_tracked: bool | None = None
+
+
+class WhaleWalletsResponse(BaseModel):
+    wallets: list[WhaleWalletAgg]
+
+
+class TrackedWallet(BaseModel):
+    address: str
+    label: str | None = None
+    notes: str | None = None
+    created_at_ms: int
+
+
+class TrackedWalletsResponse(BaseModel):
+    wallets: list[TrackedWallet]
+
+
+class TrackWalletRequest(BaseModel):
+    address: str
+    label: str | None = None
+    notes: str | None = None
+
+
+class WalletDetailResponse(BaseModel):
+    wallet: str
+    summary: WhaleWalletAgg | None = None
+    tracked: TrackedWallet | None = None
+
+
+class WalletLiveResponse(BaseModel):
+    wallet: str
+    value: Any = None
+    positions: Any = None
+    closed_positions: Any = None
+    activity: Any = None

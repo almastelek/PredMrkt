@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-
-const API = process.env.NEXT_PUBLIC_API || 'http://127.0.0.1:8000';
+import { getJSON, sendJSON } from '../../../lib/api';
 const moneyFmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const intFmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 
@@ -79,14 +78,15 @@ function getPriceProb(item: Record<string, any>): number | null {
 export default function WhaleWalletPage({ params }: { params: { address: string } }) {
   const address = (params.address || '').toLowerCase();
   const [data, setData] = useState<any>(null);
+  const [live, setLive] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [liveError, setLiveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = () => {
     setLoading(true);
-    fetch(`${API}/whales/wallets/${encodeURIComponent(address)}?live=true`)
-      .then((r) => r.json())
+    getJSON<any>(`/whales/wallets/${encodeURIComponent(address)}`)
       .then((d) => setData(d))
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load wallet'))
       .finally(() => setLoading(false));
@@ -96,19 +96,31 @@ export default function WhaleWalletPage({ params }: { params: { address: string 
     load();
   }, [address]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setLive(null);
+    setLiveError(null);
+    getJSON<any>(`/whales/wallets/${encodeURIComponent(address)}/live`)
+      .then((d) => {
+        if (!cancelled) setLive(d);
+      })
+      .catch((e) => {
+        if (!cancelled) setLiveError(e instanceof Error ? e.message : 'Failed to load live data');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [address]);
+
   const tracked = !!data?.tracked;
 
   const toggleTrack = async () => {
     setBusy(true);
     try {
       if (tracked) {
-        await fetch(`${API}/whales/track/${encodeURIComponent(address)}`, { method: 'DELETE' });
+        await sendJSON(`/whales/track/${encodeURIComponent(address)}`, 'DELETE');
       } else {
-        await fetch(`${API}/whales/track`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ address }),
-        });
+        await sendJSON(`/whales/track`, 'POST', { address });
       }
       load();
     } finally {
@@ -162,7 +174,7 @@ export default function WhaleWalletPage({ params }: { params: { address: string 
         <div style={{ color: '#888', fontSize: 12 }}>Portfolio value</div>
         <div style={{ fontSize: 20 }}>
           {(() => {
-            const v = data?.value;
+            const v = live?.value;
             if (typeof v === 'number') return `$${moneyFmt.format(v)}`;
             if (v && typeof v === 'object') {
               const valueNum = Number((v as any).value ?? (v as any).total ?? (v as any).totalValue ?? 0);
@@ -172,13 +184,14 @@ export default function WhaleWalletPage({ params }: { params: { address: string 
           })()}
         </div>
       </div>
+      {liveError && <p style={{ color: '#f88' }}>{liveError}</p>}
 
       {[
         { key: 'positions', label: 'Open positions' },
         { key: 'closed_positions', label: 'Closed positions' },
         { key: 'activity', label: 'Recent activity' },
       ].map((section) => {
-        const rows = toArray((data as any)?.[section.key]);
+        const rows = toArray((live as any)?.[section.key]);
         return (
           <div key={section.key} style={{ marginTop: 16 }}>
             <h4 style={{ marginBottom: 10 }}>{section.label}</h4>
