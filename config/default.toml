@@ -38,6 +38,7 @@ data_api_base = "https://data-api.polymarket.com"
 whale_min_cash_filter = 10000
 whale_ingest_page_limit = 1000
 whale_ingest_max_pages = 20
+whale_background_interval_sec = 300
 
 [logging]
 level = "INFO"

@@ -159,6 +159,10 @@ class Settings:
         return int(self.polymarket.get("whale_ingest_max_pages", 20))
 
     @property
+    def whale_background_interval_sec(self) -> int:
+        return int(self.polymarket.get("whale_background_interval_sec", 300))
+
+    @property
     def logging_level(self) -> str:
         return self.logging.get("level", "INFO").upper()
 

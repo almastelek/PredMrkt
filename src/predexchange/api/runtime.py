@@ -10,3 +10,11 @@ config_profile: str | None = None
 refresh_markets_metadata_on_start: bool = True
 refresh_tracked_on_start: bool = False
 
+# Optional whales background ingestion (only when run_with_ingestion=True)
+run_with_whales: bool = False
+whales_interval_sec: int = 300
+whales_min_cash: float | None = None
+whales_page_limit: int | None = None
+whales_max_pages: int | None = None
+whales_taker_only: bool = True
+

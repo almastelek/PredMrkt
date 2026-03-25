@@ -23,6 +23,31 @@ def api(
         "--refresh-tracked",
         help="On startup (with --with-ingestion), refresh tracked markets via Gamma selector (like 'predex markets discover')",
     ),
+    with_whales: bool = typer.Option(
+        False,
+        "--with-whales",
+        help="Run whales Data API ingestion in a background loop (requires --with-ingestion)",
+    ),
+    whales_interval_sec: int | None = typer.Option(
+        None,
+        "--whales-interval-sec",
+        help="Background whales ingest interval (seconds). Default from config.",
+    ),
+    whales_min_cash: float | None = typer.Option(
+        None,
+        "--whales-min-cash",
+        help="Background whales min cash filter. Default from config.",
+    ),
+    whales_page_limit: int | None = typer.Option(
+        None,
+        "--whales-page-limit",
+        help="Background whales page limit for /trades. Default from config.",
+    ),
+    whales_max_pages: int | None = typer.Option(
+        None,
+        "--whales-max-pages",
+        help="Background whales max pages per cycle. Default from config.",
+    ),
     profile: str | None = typer.Option(None, "--profile", help="Config profile (e.g. dev)"),
 ) -> None:
     if ctx.invoked_subcommand is not None:
@@ -34,6 +59,11 @@ def api(
         with_sports=with_sports,
         profile=profile,
         refresh_tracked=refresh_tracked,
+        with_whales=with_whales,
+        whales_interval_sec=whales_interval_sec,
+        whales_min_cash=whales_min_cash,
+        whales_page_limit=whales_page_limit,
+        whales_max_pages=whales_max_pages,
     )
 
 

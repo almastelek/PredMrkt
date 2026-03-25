@@ -47,6 +47,8 @@ from predexchange.storage.sports import get_sports_game, list_sports_games
 from predexchange.simulation.runner import get_run_result
 from predexchange.ingestion.polymarket.gamma import fetch_markets, select_top_markets
 from predexchange.storage.markets import set_tracked_markets, upsert_markets
+from predexchange.ingestion.polymarket.data_api import PolymarketDataApiClient
+from predexchange.whales.ingest import run_whales_ingest_once
 
 def _get_conn():
     return get_api_connection()
@@ -92,6 +94,9 @@ async def lifespan(app: FastAPI):
     ingestion_stop = None
     ingestion_manager = None
 
+    whales_task = None
+    whales_stop = None
+
     if runtime.run_with_ingestion:
         settings = get_settings(runtime.config_profile)
         from predexchange.ingestion.manager import IngestionManager
@@ -106,6 +111,42 @@ async def lifespan(app: FastAPI):
         )
         ingestion_stop = asyncio.Event()
         ingestion_task = asyncio.create_task(ingestion_manager.run(stop_event=ingestion_stop))
+
+        if runtime.run_with_whales:
+            settings = get_settings(runtime.config_profile)
+            whales_stop = asyncio.Event()
+
+            async def _whales_loop() -> None:
+                import structlog
+
+                log = structlog.get_logger(__name__)
+                interval = int(settings.whale_background_interval_sec)
+                if runtime.whales_interval_sec:
+                    interval = int(runtime.whales_interval_sec)
+                client = PolymarketDataApiClient(base_url=settings.data_api_base)
+                while not whales_stop.is_set():
+                    try:
+                        c = get_connection(settings.db_path, read_only=False)
+                        try:
+                            init_schema(c)
+                            run_whales_ingest_once(
+                                conn=c,
+                                client=client,
+                                min_cash=float(runtime.whales_min_cash or settings.whale_min_cash_filter),
+                                page_limit=int(runtime.whales_page_limit or settings.whale_ingest_page_limit),
+                                max_pages=int(runtime.whales_max_pages or settings.whale_ingest_max_pages),
+                                taker_only=bool(runtime.whales_taker_only),
+                            )
+                            c.commit()
+                        finally:
+                            c.close()
+                    except Exception as e:
+                        log.warning("whales_background_failed", error=str(e))
+                    # Wait with cancellation
+                    try:
+                        await asyncio.wait_for(whales_stop.wait(), timeout=max(1, interval))
+                    except asyncio.TimeoutError:
+                        pass
 
     sports_task = None
     sports_stop = None
@@ -127,6 +168,9 @@ async def lifespan(app: FastAPI):
         sports_stop = asyncio.Event()
         sports_task = asyncio.create_task(run_sports_ws(_on_sport_result, stop_event=sports_stop))
 
+    if whales_stop is not None:
+        whales_task = asyncio.create_task(_whales_loop())
+
     yield
 
     if ingestion_task is not None and ingestion_stop is not None and ingestion_manager is not None:
@@ -136,6 +180,9 @@ async def lifespan(app: FastAPI):
     if sports_task is not None and sports_stop is not None:
         sports_stop.set()
         await sports_task
+    if whales_task is not None and whales_stop is not None:
+        whales_stop.set()
+        await whales_task
 
 
 app = FastAPI(title="PredExchange API", version="0.1.0", lifespan=lifespan)
@@ -703,11 +750,21 @@ def run_api(
     with_ingestion: bool = False,
     with_sports: bool = False,
     refresh_tracked: bool = False,
+    with_whales: bool = False,
+    whales_interval_sec: int | None = None,
+    whales_min_cash: float | None = None,
+    whales_page_limit: int | None = None,
+    whales_max_pages: int | None = None,
     profile: str | None = None,
 ) -> None:
     runtime.run_with_ingestion = with_ingestion
     runtime.run_with_sports = with_sports or with_ingestion
     runtime.config_profile = profile
     runtime.refresh_tracked_on_start = bool(refresh_tracked)
+    runtime.run_with_whales = bool(with_whales)
+    runtime.whales_interval_sec = int(whales_interval_sec) if whales_interval_sec is not None else runtime.whales_interval_sec
+    runtime.whales_min_cash = float(whales_min_cash) if whales_min_cash is not None else None
+    runtime.whales_page_limit = int(whales_page_limit) if whales_page_limit is not None else None
+    runtime.whales_max_pages = int(whales_max_pages) if whales_max_pages is not None else None
     import uvicorn
     uvicorn.run("predexchange.api.main:app", host=host, port=port, reload=False)
