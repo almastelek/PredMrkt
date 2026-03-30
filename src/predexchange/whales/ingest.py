@@ -12,7 +12,9 @@ from predexchange.storage.whales import get_ingestion_cursor, insert_trades, ups
 
 log = structlog.get_logger(__name__)
 
+# Data API rejects offset >= 3000 ("max historical activity offset of 3000 exceeded").
 MAX_DATA_API_OFFSET = 3000
+MAX_VALID_OFFSET = MAX_DATA_API_OFFSET - 1  # inclusive; last legal offset is 2999
 
 
 def run_whales_ingest_once(
@@ -31,7 +33,7 @@ def run_whales_ingest_once(
 
     Uses a rolling window approach compatible with Data API offset cap.
     Persists cursors:
-      - whales_offset (clamped to <= 3000)
+      - whales_offset (0..2999; rolls to 0 after passing the API offset cap)
       - whales_last_ts_ms
     """
     saved_offset = 0
@@ -43,7 +45,7 @@ def run_whales_ingest_once(
             except ValueError:
                 saved_offset = 0
     start_offset = max(0, from_offset) if from_offset is not None else saved_offset
-    if start_offset > MAX_DATA_API_OFFSET:
+    if start_offset > MAX_VALID_OFFSET:
         start_offset = 0
 
     raw_ts = None if reset_offset else get_ingestion_cursor(conn, "whales_last_ts_ms")
@@ -62,8 +64,9 @@ def run_whales_ingest_once(
     last_error: str | None = None
 
     for _i in range(max(1, max_pages)):
-        offset = current_offset
-        if offset > MAX_DATA_API_OFFSET:
+        offset = min(current_offset, MAX_VALID_OFFSET)
+        if current_offset >= MAX_DATA_API_OFFSET:
+            # Rolled past last legal page; next cycle starts from 0 with last_ts filter.
             break
         try:
             rows = client.get_trades(
@@ -104,7 +107,10 @@ def run_whales_ingest_once(
         total_inserted += inserted
 
         current_offset += len(rows)
-        effective_offset = min(current_offset, MAX_DATA_API_OFFSET)
+        # Never persist 3000 — API treats it as invalid; cap at 2999 or reset to 0 when exhausted.
+        effective_offset = min(current_offset, MAX_VALID_OFFSET)
+        if current_offset >= MAX_DATA_API_OFFSET:
+            effective_offset = 0
         upsert_ingestion_cursor(conn, "whales_offset", str(effective_offset))
         upsert_ingestion_cursor(conn, "whales_last_ts_ms", str(max_seen_ts_ms))
 
@@ -113,7 +119,9 @@ def run_whales_ingest_once(
         if stale_pages >= 2:
             break
 
-    effective_offset = min(current_offset, MAX_DATA_API_OFFSET)
+    effective_offset = min(current_offset, MAX_VALID_OFFSET)
+    if current_offset >= MAX_DATA_API_OFFSET:
+        effective_offset = 0
     upsert_ingestion_cursor(conn, "whales_offset", str(effective_offset))
     upsert_ingestion_cursor(conn, "whales_last_ts_ms", str(max_seen_ts_ms))
 

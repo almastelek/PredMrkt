@@ -49,7 +49,7 @@ def normalize_trade(raw: dict[str, Any]) -> dict[str, Any]:
 class PolymarketDataApiClient:
     """Thin client around Data API endpoints used by whale/insider feature."""
 
-    def __init__(self, base_url: str = DATA_API_BASE, timeout: float = 30.0) -> None:
+    def __init__(self, base_url: str = DATA_API_BASE, timeout: float = 90.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
@@ -60,11 +60,15 @@ class PolymarketDataApiClient:
         *,
         retries: int = 3,
         retry_backoff_sec: float = 1.0,
+        timeout: float | None = None,
     ) -> Any:
+        read_timeout = timeout if timeout is not None else self.timeout
         attempt = 0
         while True:
             try:
-                with httpx.Client(timeout=self.timeout) as client:
+                with httpx.Client(
+                    timeout=httpx.Timeout(read_timeout, connect=min(30.0, read_timeout))
+                ) as client:
                     r = client.get(f"{self.base_url}{path}", params=params)
                     # Retry transient gateway/timeouts/rate limit responses.
                     if r.status_code in (408, 429, 500, 502, 503, 504) and attempt < retries:
@@ -110,7 +114,15 @@ class PolymarketDataApiClient:
             params["user"] = user
         if side:
             params["side"] = side
-        data = self._get("/trades", params)
+        # /trades is slow; server often returns 408 if the query runs too long.
+        heavy_timeout = max(self.timeout, 120.0)
+        data = self._get(
+            "/trades",
+            params,
+            retries=5,
+            retry_backoff_sec=1.5,
+            timeout=heavy_timeout,
+        )
         return data if isinstance(data, list) else []
 
     def get_positions(self, user: str) -> Any:
