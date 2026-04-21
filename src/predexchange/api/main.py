@@ -196,6 +196,10 @@ from predexchange.api import whales
 
 app.include_router(whales.router, tags=["whales"])
 
+from predexchange.api import signals as signals_api
+
+app.include_router(signals_api.router, tags=["signals"])
+
 
 def _error_json(code: str, message: str, status_code: int = 404) -> JSONResponse:
     """Return consistent error JSON: { detail, code }."""

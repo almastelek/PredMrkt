@@ -156,6 +156,79 @@ CREATE TABLE IF NOT EXISTS ingestion_cursors (
     cursor_value    VARCHAR,
     updated_at_ms   BIGINT NOT NULL
 );
+
+-- Wallet trade episodes: contiguous bursts of fills by a wallet on a single outcome.
+CREATE TABLE IF NOT EXISTS wallet_trade_episodes (
+    episode_id                VARCHAR PRIMARY KEY,
+    wallet                    VARCHAR NOT NULL,
+    condition_id              VARCHAR NOT NULL,
+    outcome                   VARCHAR,
+    asset_id                  VARCHAR,
+    market_slug               VARCHAR,
+    event_slug                VARCHAR,
+    title                     VARCHAR,
+    episode_start_ms          BIGINT NOT NULL,
+    episode_end_ms            BIGINT NOT NULL,
+    trade_count               INTEGER NOT NULL,
+    buy_count                 INTEGER NOT NULL,
+    sell_count                INTEGER NOT NULL,
+    gross_notional_usdc       DOUBLE NOT NULL,
+    net_notional_usdc         DOUBLE NOT NULL,
+    avg_fill_price            DOUBLE,
+    vwap_price                DOUBLE,
+    max_single_fill_usdc      DOUBLE,
+    market_category           VARCHAR,
+    event_start_ms            BIGINT,
+    resolution_time_ms        BIGINT,
+    mins_to_event_start       DOUBLE,
+    mins_to_resolution        DOUBLE,
+    px_t0                     DOUBLE,
+    px_fwd_1h                 DOUBLE,
+    px_fwd_6h                 DOUBLE,
+    px_fwd_24h                DOUBLE,
+    ret_1h                    DOUBLE,
+    ret_6h                    DOUBLE,
+    ret_24h                   DOUBLE,
+    resolved_correct          BOOLEAN,
+    created_at_ms             BIGINT NOT NULL,
+    updated_at_ms             BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wallet_signal_stats (
+    wallet                          VARCHAR PRIMARY KEY,
+    asof_ms                         BIGINT NOT NULL,
+    episodes_30d                    INTEGER NOT NULL,
+    gross_notional_30d              DOUBLE NOT NULL,
+    concentration_top_market_30d    DOUBLE NOT NULL,
+    active_days_30d                 INTEGER NOT NULL,
+    hitrate_24h_90d                 DOUBLE,
+    avg_ret_24h_90d                 DOUBLE,
+    sharpe_like_90d                 DOUBLE,
+    edge_consistency_90d            DOUBLE,
+    sports_share_30d                DOUBLE,
+    non_sports_share_30d            DOUBLE,
+    historical_episode_count        INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS wallet_signal_alerts (
+    alert_id                    VARCHAR PRIMARY KEY,
+    episode_id                  VARCHAR NOT NULL,
+    wallet                      VARCHAR NOT NULL,
+    condition_id                VARCHAR,
+    market_category             VARCHAR,
+    scored_at_ms                BIGINT NOT NULL,
+    base_edge_score             DOUBLE NOT NULL,
+    context_adjusted_score      DOUBLE NOT NULL,
+    insider_likelihood_score    DOUBLE NOT NULL,
+    factor_timing               DOUBLE,
+    factor_size                 DOUBLE,
+    factor_concentration        DOUBLE,
+    factor_history              DOUBLE,
+    factor_coordination         DOUBLE,
+    factor_sports_penalty       DOUBLE,
+    reason_codes_json           VARCHAR,
+    review_status               VARCHAR DEFAULT 'new'
+);
 """
 
 

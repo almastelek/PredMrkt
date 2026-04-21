@@ -6,6 +6,7 @@ import typer
 
 from predexchange.config import get_settings
 from predexchange.ingestion.polymarket.data_api import PolymarketDataApiClient
+from predexchange.signals.build import run_signals_pipeline
 from predexchange.storage.db import get_connection, init_schema
 from predexchange.whales.ingest import run_whales_ingest_once
 
@@ -60,6 +61,42 @@ def ingest(
         )
         if stats.get("last_error"):
             typer.echo(f"last_error: {stats['last_error']}")
+    finally:
+        conn.close()
+
+
+@app.command("signals")
+def signals(
+    lookback_days: int = typer.Option(60, "--lookback-days", help="Days of trades to consider"),
+    gap_minutes: int = typer.Option(30, "--gap-minutes", help="Gap that closes an episode"),
+    score_since_hours: int = typer.Option(168, "--score-since-hours", help="Score episodes from the last N hours"),
+    max_alerts: int = typer.Option(1000, "--max-alerts", help="Max alerts scored per run"),
+    forward_returns_limit: int = typer.Option(500, "--forward-returns-limit", help="Max episodes to attempt fwd-return fill"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Config profile"),
+) -> None:
+    """Build episodes + wallet stats + alert scores from existing data_api_trades."""
+    settings = get_settings(profile)
+    conn = get_connection(settings.db_path, read_only=False)
+    try:
+        init_schema(conn)
+        typer.echo("Building wallet signals...")
+        stats = run_signals_pipeline(
+            conn,
+            lookback_days=lookback_days,
+            gap_ms=int(gap_minutes) * 60 * 1000,
+            score_since_hours=score_since_hours,
+            max_alerts=max_alerts,
+            forward_returns_limit=forward_returns_limit,
+        )
+        conn.commit()
+        typer.echo(
+            "Done. "
+            f"episodes={stats['episodes_upserted']} "
+            f"categories={stats['market_meta_updated']} "
+            f"fwd_returns={stats['forward_returns_filled']} "
+            f"wallet_stats={stats['wallet_stats_upserted']} "
+            f"alerts={stats['alerts_scored']}"
+        )
     finally:
         conn.close()
 

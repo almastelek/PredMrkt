@@ -192,3 +192,95 @@ class WalletLiveResponse(BaseModel):
     positions: Any = None
     closed_positions: Any = None
     activity: Any = None
+
+
+# --- Signals: episodes, stats, alerts ---
+class WalletEpisode(BaseModel):
+    episode_id: str
+    wallet: str
+    condition_id: str
+    outcome: str | None = None
+    asset_id: str | None = None
+    market_slug: str | None = None
+    event_slug: str | None = None
+    title: str | None = None
+    episode_start_ms: int
+    episode_end_ms: int
+    trade_count: int
+    buy_count: int
+    sell_count: int
+    gross_notional_usdc: float
+    net_notional_usdc: float
+    avg_fill_price: float | None = None
+    vwap_price: float | None = None
+    max_single_fill_usdc: float | None = None
+    market_category: str | None = None
+    mins_to_event_start: float | None = None
+    mins_to_resolution: float | None = None
+    px_t0: float | None = None
+    px_fwd_1h: float | None = None
+    px_fwd_6h: float | None = None
+    px_fwd_24h: float | None = None
+    ret_1h: float | None = None
+    ret_6h: float | None = None
+    ret_24h: float | None = None
+
+
+class WalletEpisodesResponse(BaseModel):
+    episodes: list[WalletEpisode]
+
+
+class WalletSignalStats(BaseModel):
+    wallet: str
+    asof_ms: int
+    episodes_30d: int
+    gross_notional_30d: float
+    concentration_top_market_30d: float
+    active_days_30d: int
+    hitrate_24h_90d: float | None = None
+    avg_ret_24h_90d: float | None = None
+    sharpe_like_90d: float | None = None
+    edge_consistency_90d: float | None = None
+    sports_share_30d: float
+    non_sports_share_30d: float
+    historical_episode_count: int
+
+
+class WalletSignalStatsResponse(BaseModel):
+    stats: WalletSignalStats | None = None
+
+
+class SignalAlert(BaseModel):
+    alert_id: str
+    episode_id: str
+    wallet: str
+    condition_id: str | None = None
+    market_category: str | None = None
+    scored_at_ms: int
+    base_edge_score: float
+    context_adjusted_score: float
+    insider_likelihood_score: float
+    factor_timing: float | None = None
+    factor_size: float | None = None
+    factor_concentration: float | None = None
+    factor_history: float | None = None
+    factor_coordination: float | None = None
+    factor_sports_penalty: float | None = None
+    reason_codes: list[str] = Field(default_factory=list)
+    review_status: str = "new"
+    title: str | None = None
+    outcome: str | None = None
+    gross_notional_usdc: float | None = None
+    episode_end_ms: int | None = None
+
+
+class SignalAlertsResponse(BaseModel):
+    alerts: list[SignalAlert]
+
+
+class SignalsRunResponse(BaseModel):
+    episodes_upserted: int
+    market_meta_updated: int
+    forward_returns_filled: int
+    wallet_stats_upserted: int
+    alerts_scored: int
