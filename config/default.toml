@@ -40,6 +40,29 @@ whale_ingest_page_limit = 1000
 whale_ingest_max_pages = 20
 whale_background_interval_sec = 300
 
+[signals]
+# Periodic episode/stats/alert pipeline (requires API run with --with-signals)
+enabled_background = false
+background_interval_sec = 600
+
+# Episode + alert pipeline tunables
+lookback_days = 60
+gap_minutes = 30
+score_since_hours = 168      # 7 days
+max_alerts = 1000
+forward_returns_limit = 500
+
+# Scoring weights (logistic combine of normalized factors)
+weight_timing = 0.30
+weight_size = 0.20
+weight_concentration = 0.15
+weight_history = 0.25
+weight_coordination = 0.10
+weight_bias = -0.5            # shift so "average" episodes score lower
+
+# Context adjustment
+sports_market_mult = 0.70     # discount sports market edge; still surfaced separately
+
 [logging]
 level = "INFO"
 # format: "json" or "console"
