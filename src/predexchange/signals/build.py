@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
@@ -24,29 +25,44 @@ import structlog
 log = structlog.get_logger(__name__)
 
 
-# ----- Tunables (kept in code, easy to promote to config/default.toml later) -----
+# ----- Defaults (mirrored in config/default.toml under [signals]) -----
 EPISODE_GAP_MS_DEFAULT = 30 * 60 * 1000  # 30 min gap closes an episode
 EPISODE_LOOKBACK_DAYS_DEFAULT = 60
 WALLET_STATS_WINDOW_30D_MS = 30 * 24 * 3600 * 1000
 WALLET_STATS_WINDOW_90D_MS = 90 * 24 * 3600 * 1000
 FWD_RETURN_WINDOW_MS = 30 * 60 * 1000  # +/- 30 min around target horizon
 
-# Scoring weights (logistic combine) -- interpretable v1.
-W_TIMING = 0.30
-W_SIZE = 0.20
-W_CONCENTRATION = 0.15
-W_HISTORY = 0.25
-W_COORDINATION = 0.10
-W_BIAS = -0.5  # shift so "average" episode ~ low score
-
-# Context multipliers.
-SPORTS_MARKET_MULT = 0.70
+DEFAULT_WEIGHTS: dict[str, float] = {
+    "timing": 0.30,
+    "size": 0.20,
+    "concentration": 0.15,
+    "history": 0.25,
+    "coordination": 0.10,
+    "bias": -0.5,
+}
+DEFAULT_SPORTS_MULT = 0.70
 
 # Score thresholds for reason codes.
 REASON_LARGE_NOTIONAL = 50_000.0
 REASON_CONCENTRATION = 0.6
 REASON_HITRATE = 0.55
 REASON_COORDINATION_COUNT = 2
+
+
+@dataclass
+class SignalsConfig:
+    """Tunables for the signals pipeline; safe defaults match config/default.toml."""
+
+    lookback_days: int = EPISODE_LOOKBACK_DAYS_DEFAULT
+    gap_ms: int = EPISODE_GAP_MS_DEFAULT
+    score_since_hours: int = 24 * 7
+    max_alerts: int = 1000
+    forward_returns_limit: int = 500
+    weights: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
+    sports_market_mult: float = DEFAULT_SPORTS_MULT
+
+    def weight(self, name: str) -> float:
+        return float(self.weights.get(name, DEFAULT_WEIGHTS.get(name, 0.0)))
 
 
 def _sigmoid(x: float) -> float:
@@ -567,8 +583,15 @@ def _factor_coordination(other_wallets: int) -> float:
     return _clip(math.log2(1 + other_wallets) - 0.5, -0.5, 2.0)
 
 
-def score_alerts(conn: Any, *, since_hours: int = 24 * 7, max_alerts: int = 1000) -> int:
+def score_alerts(
+    conn: Any,
+    *,
+    since_hours: int = 24 * 7,
+    max_alerts: int = 1000,
+    config: SignalsConfig | None = None,
+) -> int:
     """Score recent episodes and upsert into wallet_signal_alerts."""
+    cfg = config or SignalsConfig()
     now_ms = int(time.time() * 1000)
     since_ms = now_ms - int(since_hours) * 3600 * 1000
 
@@ -611,17 +634,17 @@ def score_alerts(conn: Any, *, since_hours: int = 24 * 7, max_alerts: int = 1000
         f_coord = _factor_coordination(others)
 
         z = (
-            W_TIMING * f_time
-            + W_SIZE * f_size
-            + W_CONCENTRATION * f_conc
-            + W_HISTORY * f_hist
-            + W_COORDINATION * f_coord
-            + W_BIAS
+            cfg.weight("timing") * f_time
+            + cfg.weight("size") * f_size
+            + cfg.weight("concentration") * f_conc
+            + cfg.weight("history") * f_hist
+            + cfg.weight("coordination") * f_coord
+            + cfg.weight("bias")
         )
         base = 100.0 * _sigmoid(z)
 
         is_sports = "sport" in (mkt_category or "")
-        m_market = SPORTS_MARKET_MULT if is_sports else 1.0
+        m_market = cfg.sports_market_mult if is_sports else 1.0
         m_horizon = 1.0
         if mins_to_res is not None and mins_to_res > 0:
             if mins_to_res < 60:
@@ -693,22 +716,52 @@ def score_alerts(conn: Any, *, since_hours: int = 24 * 7, max_alerts: int = 1000
 def run_signals_pipeline(
     conn: Any,
     *,
-    lookback_days: int = EPISODE_LOOKBACK_DAYS_DEFAULT,
-    gap_ms: int = EPISODE_GAP_MS_DEFAULT,
-    score_since_hours: int = 24 * 7,
-    max_alerts: int = 1000,
-    forward_returns_limit: int = 500,
+    config: SignalsConfig | None = None,
+    # Legacy kwargs kept for CLI/API convenience; if provided, override cfg fields.
+    lookback_days: int | None = None,
+    gap_ms: int | None = None,
+    score_since_hours: int | None = None,
+    max_alerts: int | None = None,
+    forward_returns_limit: int | None = None,
 ) -> dict[str, int]:
+    cfg = config or SignalsConfig()
+    if lookback_days is not None:
+        cfg.lookback_days = int(lookback_days)
+    if gap_ms is not None:
+        cfg.gap_ms = int(gap_ms)
+    if score_since_hours is not None:
+        cfg.score_since_hours = int(score_since_hours)
+    if max_alerts is not None:
+        cfg.max_alerts = int(max_alerts)
+    if forward_returns_limit is not None:
+        cfg.forward_returns_limit = int(forward_returns_limit)
+
     stats: dict[str, int] = {}
     stats["episodes_upserted"] = build_episodes(
-        conn, lookback_days=lookback_days, gap_ms=gap_ms
+        conn, lookback_days=cfg.lookback_days, gap_ms=cfg.gap_ms
     )
     stats["market_meta_updated"] = attach_market_meta(conn)
     stats["forward_returns_filled"] = compute_forward_returns(
-        conn, limit=forward_returns_limit
+        conn, limit=cfg.forward_returns_limit
     )
     stats["wallet_stats_upserted"] = build_wallet_stats(conn)
     stats["alerts_scored"] = score_alerts(
-        conn, since_hours=score_since_hours, max_alerts=max_alerts
+        conn,
+        since_hours=cfg.score_since_hours,
+        max_alerts=cfg.max_alerts,
+        config=cfg,
     )
     return stats
+
+
+def config_from_settings(settings: Any) -> SignalsConfig:
+    """Build a SignalsConfig from a Settings instance (config/default.toml)."""
+    return SignalsConfig(
+        lookback_days=settings.signals_lookback_days,
+        gap_ms=int(settings.signals_gap_minutes) * 60 * 1000,
+        score_since_hours=settings.signals_score_since_hours,
+        max_alerts=settings.signals_max_alerts,
+        forward_returns_limit=settings.signals_forward_returns_limit,
+        weights=dict(settings.signals_weights),
+        sports_market_mult=float(settings.signals_sports_market_mult),
+    )

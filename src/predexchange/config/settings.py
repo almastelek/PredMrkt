@@ -66,12 +66,14 @@ class Settings:
         markets: dict[str, Any] | None = None,
         polymarket: dict[str, Any] | None = None,
         logging: dict[str, Any] | None = None,
+        signals: dict[str, Any] | None = None,
     ):
         self.ingestion = ingestion or {}
         self.storage = storage or {}
         self.markets = markets or {}
         self.polymarket = polymarket or {}
         self.logging = logging or {}
+        self.signals = signals or {}
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Settings:
@@ -81,6 +83,7 @@ class Settings:
             markets=raw.get("markets"),
             polymarket=raw.get("polymarket"),
             logging=raw.get("logging"),
+            signals=raw.get("signals"),
         )
 
     # Convenience accessors with defaults
@@ -161,6 +164,50 @@ class Settings:
     @property
     def whale_background_interval_sec(self) -> int:
         return int(self.polymarket.get("whale_background_interval_sec", 300))
+
+    # --- Signals pipeline tunables ---
+    @property
+    def signals_enabled_background(self) -> bool:
+        return bool(self.signals.get("enabled_background", False))
+
+    @property
+    def signals_background_interval_sec(self) -> int:
+        return int(self.signals.get("background_interval_sec", 600))
+
+    @property
+    def signals_lookback_days(self) -> int:
+        return int(self.signals.get("lookback_days", 60))
+
+    @property
+    def signals_gap_minutes(self) -> int:
+        return int(self.signals.get("gap_minutes", 30))
+
+    @property
+    def signals_score_since_hours(self) -> int:
+        return int(self.signals.get("score_since_hours", 168))
+
+    @property
+    def signals_max_alerts(self) -> int:
+        return int(self.signals.get("max_alerts", 1000))
+
+    @property
+    def signals_forward_returns_limit(self) -> int:
+        return int(self.signals.get("forward_returns_limit", 500))
+
+    @property
+    def signals_weights(self) -> dict[str, float]:
+        return {
+            "timing": float(self.signals.get("weight_timing", 0.30)),
+            "size": float(self.signals.get("weight_size", 0.20)),
+            "concentration": float(self.signals.get("weight_concentration", 0.15)),
+            "history": float(self.signals.get("weight_history", 0.25)),
+            "coordination": float(self.signals.get("weight_coordination", 0.10)),
+            "bias": float(self.signals.get("weight_bias", -0.5)),
+        }
+
+    @property
+    def signals_sports_market_mult(self) -> float:
+        return float(self.signals.get("sports_market_mult", 0.70))
 
     @property
     def logging_level(self) -> str:

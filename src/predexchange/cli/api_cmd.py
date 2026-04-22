@@ -48,6 +48,17 @@ def api(
         "--whales-max-pages",
         help="Background whales max pages per cycle. Default from config.",
     ),
+    with_signals: bool = typer.Option(
+        False,
+        "--with-signals",
+        help="Run signals pipeline (episodes -> stats -> alerts) periodically. "
+             "Can also be enabled via [signals].enabled_background in config.",
+    ),
+    signals_interval_sec: int | None = typer.Option(
+        None,
+        "--signals-interval-sec",
+        help="Signals pipeline cycle interval (seconds). Default from [signals].background_interval_sec.",
+    ),
     profile: str | None = typer.Option(None, "--profile", help="Config profile (e.g. dev)"),
 ) -> None:
     if ctx.invoked_subcommand is not None:
@@ -64,6 +75,8 @@ def api(
         whales_min_cash=whales_min_cash,
         whales_page_limit=whales_page_limit,
         whales_max_pages=whales_max_pages,
+        with_signals=with_signals,
+        signals_interval_sec=signals_interval_sec,
     )
 
 
