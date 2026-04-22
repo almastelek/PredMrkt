@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
+from predexchange.api import runtime
 from predexchange.api.db import get_api_connection
 from predexchange.api.schemas import (
     SignalAlert,
@@ -14,7 +15,8 @@ from predexchange.api.schemas import (
     WalletSignalStats,
     WalletSignalStatsResponse,
 )
-from predexchange.signals.build import run_signals_pipeline
+from predexchange.config import get_settings
+from predexchange.signals.build import config_from_settings, run_signals_pipeline
 from predexchange.storage.db import init_schema
 from predexchange.storage.signals import get_wallet_stats, list_alerts, list_episodes
 
@@ -77,20 +79,23 @@ def whales_signals(
 
 @router.post("/whales/signals/run", response_model=SignalsRunResponse)
 def whales_signals_run(
-    lookback_days: int = Query(60, ge=1, le=365),
-    gap_minutes: int = Query(30, ge=1, le=720),
-    score_since_hours: int = Query(24 * 7, ge=1, le=24 * 30),
-    max_alerts: int = Query(1000, ge=1, le=10000),
-    forward_returns_limit: int = Query(500, ge=0, le=10000),
+    lookback_days: int | None = Query(None, ge=1, le=365),
+    gap_minutes: int | None = Query(None, ge=1, le=720),
+    score_since_hours: int | None = Query(None, ge=1, le=24 * 30),
+    max_alerts: int | None = Query(None, ge=1, le=10000),
+    forward_returns_limit: int | None = Query(None, ge=0, le=10000),
 ) -> SignalsRunResponse:
+    settings = get_settings(runtime.config_profile)
+    cfg = config_from_settings(settings)
     conn = _conn()
     try:
         init_schema(conn)
         try:
             stats = run_signals_pipeline(
                 conn,
+                config=cfg,
                 lookback_days=lookback_days,
-                gap_ms=int(gap_minutes) * 60 * 1000,
+                gap_ms=int(gap_minutes) * 60 * 1000 if gap_minutes is not None else None,
                 score_since_hours=score_since_hours,
                 max_alerts=max_alerts,
                 forward_returns_limit=forward_returns_limit,

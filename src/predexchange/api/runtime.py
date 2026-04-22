@@ -18,3 +18,8 @@ whales_page_limit: int | None = None
 whales_max_pages: int | None = None
 whales_taker_only: bool = True
 
+# Optional signals background pipeline (episodes -> stats -> alerts).
+# Safe to run standalone (does not require ingestion), but typically paired with it.
+run_with_signals: bool = False
+signals_interval_sec: int | None = None
+

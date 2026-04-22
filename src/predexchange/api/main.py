@@ -49,6 +49,7 @@ from predexchange.ingestion.polymarket.gamma import fetch_markets, select_top_ma
 from predexchange.storage.markets import set_tracked_markets, upsert_markets
 from predexchange.ingestion.polymarket.data_api import PolymarketDataApiClient
 from predexchange.whales.ingest import run_whales_ingest_once
+from predexchange.signals.build import config_from_settings, run_signals_pipeline
 
 def _get_conn():
     return get_api_connection()
@@ -171,6 +172,42 @@ async def lifespan(app: FastAPI):
     if whales_stop is not None:
         whales_task = asyncio.create_task(_whales_loop())
 
+    # --- Signals background loop (episodes -> stats -> alerts) ---
+    signals_task = None
+    signals_stop = None
+    settings_for_signals = get_settings(runtime.config_profile)
+    if runtime.run_with_signals or settings_for_signals.signals_enabled_background:
+        signals_stop = asyncio.Event()
+        interval_sec = int(
+            runtime.signals_interval_sec
+            or settings_for_signals.signals_background_interval_sec
+        )
+
+        async def _signals_loop() -> None:
+            import structlog
+
+            log = structlog.get_logger(__name__)
+            while not signals_stop.is_set():
+                try:
+                    # Fresh settings each cycle so config edits apply without restart.
+                    s = get_settings(runtime.config_profile)
+                    c = get_connection(s.db_path, read_only=False)
+                    try:
+                        init_schema(c)
+                        stats = run_signals_pipeline(c, config=config_from_settings(s))
+                        c.commit()
+                        log.info("signals_background_cycle", **stats)
+                    finally:
+                        c.close()
+                except Exception as e:
+                    log.warning("signals_background_failed", error=str(e))
+                try:
+                    await asyncio.wait_for(signals_stop.wait(), timeout=max(5, interval_sec))
+                except asyncio.TimeoutError:
+                    pass
+
+        signals_task = asyncio.create_task(_signals_loop())
+
     yield
 
     if ingestion_task is not None and ingestion_stop is not None and ingestion_manager is not None:
@@ -183,6 +220,9 @@ async def lifespan(app: FastAPI):
     if whales_task is not None and whales_stop is not None:
         whales_stop.set()
         await whales_task
+    if signals_task is not None and signals_stop is not None:
+        signals_stop.set()
+        await signals_task
 
 
 app = FastAPI(title="PredExchange API", version="0.1.0", lifespan=lifespan)
@@ -759,6 +799,8 @@ def run_api(
     whales_min_cash: float | None = None,
     whales_page_limit: int | None = None,
     whales_max_pages: int | None = None,
+    with_signals: bool = False,
+    signals_interval_sec: int | None = None,
     profile: str | None = None,
 ) -> None:
     runtime.run_with_ingestion = with_ingestion
@@ -770,5 +812,7 @@ def run_api(
     runtime.whales_min_cash = float(whales_min_cash) if whales_min_cash is not None else None
     runtime.whales_page_limit = int(whales_page_limit) if whales_page_limit is not None else None
     runtime.whales_max_pages = int(whales_max_pages) if whales_max_pages is not None else None
+    runtime.run_with_signals = bool(with_signals)
+    runtime.signals_interval_sec = int(signals_interval_sec) if signals_interval_sec is not None else None
     import uvicorn
     uvicorn.run("predexchange.api.main:app", host=host, port=port, reload=False)
