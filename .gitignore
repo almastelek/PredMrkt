@@ -13,6 +13,7 @@ env/
 data/*.duckdb
 data/*.duckdb-wal
 *.parquet
+data/*.duckdb-wal
 
 # Rust (predexchange-core)
 predexchange-core/target/
