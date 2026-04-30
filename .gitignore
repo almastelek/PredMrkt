@@ -6,7 +6,6 @@ __pycache__/
 *.egg-info/
 .eggs/
 .venv/
-venv/
 env/
 
 # Local data and DB (ingestion output)
